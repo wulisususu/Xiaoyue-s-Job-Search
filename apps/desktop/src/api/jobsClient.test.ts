@@ -22,8 +22,8 @@ describe('jobsClient', () => {
   });
 
   it('loads source health and posts sync / verification actions', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } })),
     );
     vi.stubGlobal('fetch', fetchMock);
 
