@@ -11,6 +11,7 @@ import {
   type ProfileDraft,
   type ProfileField,
 } from '../api/profileClient';
+import '../styles/profile.css';
 
 function valueToEditorText(value: unknown): string {
   if (Array.isArray(value)) return value.join('\n');
