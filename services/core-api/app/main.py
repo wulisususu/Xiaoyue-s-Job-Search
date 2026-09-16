@@ -6,6 +6,8 @@ from .db import init_db
 from .routes.health import router as health_router
 from .routes.jobs import router as jobs_router
 from .routes.settings import router as settings_router
+from .routes.sources import router as sources_router
+from .routes.verification import router as verification_router
 
 
 def create_app() -> FastAPI:
@@ -23,6 +25,8 @@ def create_app() -> FastAPI:
     application.include_router(health_router)
     application.include_router(jobs_router)
     application.include_router(settings_router)
+    application.include_router(sources_router)
+    application.include_router(verification_router)
     return application
 
 
