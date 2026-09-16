@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_engine
 from ..models import ProfileDraftField, ProfileField, ProfileFieldRevision, ResumeVersion
-from ..profile.registry import get_field_definition
+from ..profile.registry import FIELD_REGISTRY, get_field_definition
 from ..profile.service import (
     ProfileDraftAlreadyReviewedError,
     ProfileDraftNotFoundError,
@@ -20,6 +20,14 @@ from ..profile.service import (
 )
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
+
+
+class ProfileDefinitionRead(BaseModel):
+    field_key: str
+    label: str
+    category: str
+    value_type: str
+    multiple: bool
 
 
 class ProfileFieldWrite(BaseModel):
@@ -128,6 +136,20 @@ def _revision_read(revision: ProfileFieldRevision) -> ProfileRevisionRead:
         confirmed=revision.confirmed,
         changed_at=revision.changed_at.isoformat(),
     )
+
+
+@router.get("/definitions", response_model=list[ProfileDefinitionRead])
+def list_profile_definitions() -> list[ProfileDefinitionRead]:
+    return [
+        ProfileDefinitionRead(
+            field_key=definition.field_key,
+            label=definition.label,
+            category=definition.category,
+            value_type=definition.value_type,
+            multiple=definition.multiple,
+        )
+        for definition in FIELD_REGISTRY.values()
+    ]
 
 
 @router.get("/fields", response_model=list[ProfileFieldRead])
