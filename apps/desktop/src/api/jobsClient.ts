@@ -124,6 +124,10 @@ export function syncWorkfindSource(): Promise<SourceSyncResult> {
   return requestJson<SourceSyncResult>(`${CORE_API_BASE}/api/sources/workfind/sync`, { method: 'POST' });
 }
 
+export function syncDueSources(): Promise<SourceSyncResult[]> {
+  return requestJson<SourceSyncResult[]>(`${CORE_API_BASE}/api/sources/sync-due`, { method: 'POST' });
+}
+
 export function verifyJob(jobId: string): Promise<JobVerificationResult> {
   return requestJson<JobVerificationResult>(`${CORE_API_BASE}/api/verification/jobs/${encodeURIComponent(jobId)}`, { method: 'POST' });
 }
