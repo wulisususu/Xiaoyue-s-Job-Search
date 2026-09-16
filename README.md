@@ -38,7 +38,7 @@ npm install
 
 ## Job Radar Core
 
-岗位雷达当前已经接入自己的标准数据层，而不是直接读取 WorkFind / Xiaozhao 的原始文件。
+岗位雷达已经接入自己的标准数据层，而不是直接把上游文件当成最终事实。
 
 数据链路：
 
@@ -51,7 +51,7 @@ Xiaozhao ─> Recruitment Feed ──┘                    └─> Job Sources 
 当前支持：
 
 - WorkFind 企业、央企/地方国企身份和央企关系导入；
-- Xiaozhao Radar `jobs.json` 导入；
+- Xiaozhao Radar Feed 导入；
 - 公司名称/别名解析；
 - URL + fingerprint 岗位去重；
 - 上游原始数据来源留档；
@@ -71,14 +71,73 @@ python .\scripts\import_job_sources.py `
   --data-dir .\local-data\job-radar
 ```
 
-当前用户提供快照的实际导入结果：
+用户提供快照的基线导入结果：
 
 - WorkFind：2271 个企业 Source、111 条可明确建立的央企关系；
 - Xiaozhao：1598 条 source rows 去重为 1486 个 canonical jobs；
-- 其中 1125 个岗位有 URL 但仍是“入口待验证”；
-- 361 个 canonical jobs 当前没有 URL。
+- 其中 1125 个岗位有 URL 但初始仍是“入口待验证”；
+- 361 个 canonical jobs 初始没有 URL。
 
-**有 URL 不等于岗位已验证开放。** Xiaozhao 产生的 URL 当前统一保持 `DISCOVERED_URL_UNVERIFIED`，只有后续官方 URL Verifier 确认后才能升级为 `VERIFIED_OPEN` 并启用“开始申请”。完整状态和数据结构见 `doc/JOB_RADAR_DATA_MODEL.md`。
+**有 URL 不等于岗位已验证开放。** 上游 URL 首先保持 `DISCOVERED_URL_UNVERIFIED`，只有验证器确认页面存在明确可申请入口后才升级为 `VERIFIED_OPEN` 并启用“开始申请”。完整状态和数据结构见 `doc/JOB_RADAR_DATA_MODEL.md`。
+
+## Online Source & Career Verification Engine
+
+岗位发现数据现在有独立的在线更新与真实性验证层，避免长期依赖某个静态 `jobs.json` 或已经过期的招聘地址。
+
+当前支持：
+
+- 直接读取腾讯 SmartSheet 公开数据，而不是把 Xiaozhao 仓库中的静态 JSON 当作长期运行时数据源；
+- WorkFind 结构化数据在线同步；
+- Source Sync Run 记录和 Last Known Good Snapshot；
+- 腾讯文档 6 小时、WorkFind 24 小时的到期同步策略；同步失败 1 小时后可重试；
+- 岗位入口只读 URL 验证、重定向解析和页面类型分类；
+- Moka、北森、Hotjob、飞书招聘、51job、国聘、SuccessFactors 等 ATS 线索识别；
+- 原始 URL、最终 URL、redirect chain、验证时间和页面证据留档；
+- 失效入口只生成 Rediscovery Candidate，不未经验证覆盖 canonical URL；
+- 只有 `VERIFIED_APPLY -> VERIFIED_OPEN` 才解锁未来 Browser Agent 的申请入口。
+
+## Profile SSOT + Immutable Resume Vault（Phase 3A）
+
+候选人信息已经从“简历文件”与“可信在线资料”两层分开：
+
+```text
+PDF / DOCX
+    ↓
+Immutable Resume Vault
+    ↓
+文本层解析
+    ↓
+Extraction Drafts（未确认）
+    ↓ 人工接受 / 拒绝
+Profile SSOT（confirmed=true）
+    ↓
+未来 ATS Mapping / Browser Agent
+```
+
+核心原则：**Resume 是导入来源，不是运行时真相；只有人工确认过的 Profile SSOT 才允许未来自动填表使用。**
+
+当前支持：
+
+- 桌面端导入 `.pdf` / `.docx` 简历；
+- 单文件最大 50 MiB；旧 `.doc` 明确拒绝；
+- SHA-256 内容寻址和不可变 Resume Version；相同字节重复上传不会生成新版本；
+- Vault 路径：`<XIAOYUE_DATA_DIR>/vault/resumes/<sha256>/original.<ext>`；API 不暴露本机 Vault 绝对路径；
+- PDF 文本层优先提取、DOCX 段落/表格文本提取；
+- 无可用文本层的 PDF 标记为 `OCR_REQUIRED`，Phase 3A 不伪造 OCR 结果；
+- 当前 deterministic extractor 仅保守识别严格邮箱和中国大陆手机号；
+- 简历解析结果只能形成 `PENDING` Draft，导入不会直接修改 Profile；
+- Draft 可以显式接受或拒绝；接受后写入 confirmed Profile，拒绝不改变 Profile；
+- Profile 支持手动创建/编辑；
+- 每次 Profile 变化都追加 `profile_field_revisions`，保留来源、旧值、新值、置信度和时间；
+- Core API 暴露服务端唯一 Field Registry，桌面端不复制一套字段定义；
+- “简历库”页面展示版本、hash 前缀、文件大小、解析状态、待审核数和 OCR 状态；
+- “我的资料”页面展示全部 Registry 字段、已确认来源以及待审核 Draft。
+
+Phase 3A 明确**没有**引入网络 AI、OCR 引擎、Browser Agent、API Key 或 Credential Store。
+
+详细设计：`docs/superpowers/specs/2026-09-16-profile-resume-vault-design.md`
+
+实施计划：`docs/superpowers/plans/2026-09-16-profile-resume-vault.md`
 
 ## 当前里程碑
 
@@ -104,8 +163,43 @@ python .\scripts\import_job_sources.py `
 - [x] Job Radar API
 - [x] 第一版岗位雷达 UI
 - [x] 聚合 URL 默认保持“待验证”，不误标为可申请
-- [ ] 官方 Apply URL Verifier
-- [ ] ATS 类型识别
+
+### Online Source & Career Verification Engine
+
+- [x] 腾讯 SmartSheet 在线同步
+- [x] WorkFind 在线同步
+- [x] Last Known Good Snapshot / Sync Run 历史
+- [x] Apply URL Verifier
+- [x] ATS Detector
+- [x] URL 健康状态与验证证据
+- [x] Rediscovery Candidate 安全门
+- [x] 到期自动同步策略
 - [ ] Browser Agent 与“开始申请”联动
 
-下一阶段优先实现 **Apply URL Verifier + ATS Detector**，让发现到的入口经过官方页面验证后，才进入 Browser Agent 自动投递链路。
+### Profile SSOT + Resume Vault — Phase 3A
+
+- [x] Canonical Profile Field Registry
+- [x] Immutable Resume Vault
+- [x] SHA-256 去重与不可变版本号
+- [x] PDF / DOCX 文本解析
+- [x] `OCR_REQUIRED` 状态
+- [x] Conservative deterministic Draft extraction
+- [x] Draft 接受 / 拒绝事务
+- [x] 手动 Profile 编辑
+- [x] Append-only Profile revision history
+- [x] Resume / Profile Core API
+- [x] 简历库 UI
+- [x] Profile SSOT / Draft Review UI
+- [x] Windows CI 覆盖 Web / Core / Build / Tauri metadata
+
+## 下一阶段
+
+优先进入 **Phase 3B：AI Profile Extraction + Secure Provider Configuration**：
+
+1. OpenAI-compatible Provider 配置：Provider Name、Base URL、reasoning/text model、vision model；
+2. API Key 进入 Windows / OS Credential Store，SQLite 只保存 `secret_ref`；
+3. 实现 `ProfileExtractionProvider` 的网络 AI 版本，把教育、经历、技能、奖项等语义信息生成 Draft；
+4. AI 仍然只能生成 Draft，不能直接写入 Profile SSOT；
+5. 再评估 OCR pipeline，使扫描型 PDF 能进入同一 Draft 审核流程。
+
+Browser Agent 自动填表继续在 Profile/Provider 数据底座稳定后接入。
