@@ -8,6 +8,7 @@ from typing import Callable
 
 from .ats import detect_ats
 from .classifier import classify_page
+from .url_guard import validate_external_url
 
 
 @dataclass(slots=True)
@@ -37,19 +38,22 @@ Transport = Callable[[str], HttpResponse]
 
 
 def _default_transport(url: str) -> HttpResponse:
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 XiaoyueJobSearch/0.1", "Accept": "text/html,application/xhtml+xml,application/json;q=0.8,*/*;q=0.5"})
+    validate_external_url(url)
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 XiaoyueJobSearch/0.1"})
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             final_url = response.geturl()
+            validate_external_url(final_url)
             body = response.read(2_000_000).decode(response.headers.get_content_charset() or "utf-8", "ignore")
             chain = [url] if final_url == url else [url, final_url]
             return HttpResponse(int(response.status), final_url, body, chain)
     except urllib.error.HTTPError as exc:
         final_url = exc.geturl() or url
+        body = ""
         try:
             body = exc.read(512_000).decode(exc.headers.get_content_charset() or "utf-8", "ignore")
         except Exception:
-            body = ""
+            pass
         chain = [url] if final_url == url else [url, final_url]
         return HttpResponse(int(exc.code), final_url, body, chain)
 
@@ -62,19 +66,27 @@ def _fingerprint(body: str) -> str | None:
 
 
 def verify_url(url: str, transport: Transport | None = None) -> VerificationResult:
-    resolved_transport = transport or _default_transport
     try:
-        response = resolved_transport(url)
+        validate_external_url(url)
+        response = (transport or _default_transport)(url)
     except Exception as exc:
         return VerificationResult(checked_url=url, final_url="", redirect_chain=[url], http_status=None, health="BROKEN", ats=None, page_type="unknown", apply_evidence=[], content_fingerprint=None, error=str(exc), body="")
+
     ats = detect_ats(response.final_url, response.body)
     classification = classify_page(response.body)
     status = response.status_code
-    if status in (401, 403, 429): health = "ACCESS_BLOCKED"
-    elif status >= 400: health = "BROKEN"
-    elif classification.page_type == "closed": health = "STALE"
-    elif classification.page_type == "login": health = "LOGIN_REQUIRED"
-    elif classification.page_type == "job_detail" and classification.apply_evidence: health = "VERIFIED_APPLY"
-    elif response.final_url and response.final_url != url: health = "REDIRECTED"
-    else: health = "HEALTHY"
+    if status in (401, 403, 429):
+        health = "ACCESS_BLOCKED"
+    elif status >= 400:
+        health = "BROKEN"
+    elif classification.page_type == "closed":
+        health = "STALE"
+    elif classification.page_type == "login":
+        health = "LOGIN_REQUIRED"
+    elif classification.page_type == "job_detail" and classification.apply_evidence:
+        health = "VERIFIED_APPLY"
+    elif response.final_url and response.final_url != url:
+        health = "REDIRECTED"
+    else:
+        health = "HEALTHY"
     return VerificationResult(checked_url=url, final_url=response.final_url, redirect_chain=response.redirect_chain, http_status=status, health=health, ats=ats, page_type=classification.page_type, apply_evidence=classification.apply_evidence, content_fingerprint=_fingerprint(response.body), body=response.body)
