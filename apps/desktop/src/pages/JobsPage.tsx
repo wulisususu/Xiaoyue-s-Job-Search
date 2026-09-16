@@ -9,6 +9,7 @@ import {
   RadarJob,
   runDueVerification,
   SourceStatus,
+  syncDueSources,
   syncTencentSource,
   syncWorkfindSource,
   verifyJob,
@@ -73,6 +74,10 @@ export function JobsPage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = useCallback(() => setRefreshKey((value) => value + 1), []);
+
+  useEffect(() => {
+    syncDueSources().then(refresh).catch(() => undefined);
+  }, [refresh]);
 
   useEffect(() => {
     let active = true;
