@@ -56,7 +56,8 @@ def test_provider_api_starts_unconfigured_and_saves_only_non_secret_settings(cli
 
     saved = client.put("/api/ai/provider", json=PROVIDER_PAYLOAD)
     assert saved.status_code == 200
-    assert saved.json() == {
+    payload = saved.json()
+    assert payload == {
         "id": "default",
         "provider_name": "OpenAI Compatible",
         "base_url": "https://example.com/v1",
@@ -67,11 +68,11 @@ def test_provider_api_starts_unconfigured_and_saves_only_non_secret_settings(cli
         "supports_json_schema": True,
         "supports_vision": True,
         "has_api_key": False,
-        "created_at": saved.json()["created_at"],
-        "updated_at": saved.json()["updated_at"],
+        "created_at": payload["created_at"],
+        "updated_at": payload["updated_at"],
     }
-    assert "api_key" not in saved.text
-    assert "secret_ref" not in saved.text
+    assert "api_key" not in payload
+    assert "secret_ref" not in payload
 
     fetched = client.get("/api/ai/provider")
     assert fetched.status_code == 200
@@ -87,10 +88,12 @@ def test_api_key_uses_dedicated_secret_endpoint_and_never_returns_secret(client,
     secret_value = "sk-super-secret-value"
     saved = client.put("/api/ai/provider/api-key", json={"api_key": secret_value})
     assert saved.status_code == 200
-    assert saved.json()["has_api_key"] is True
+    payload = saved.json()
+    assert payload["has_api_key"] is True
     assert store.values[DEFAULT_AI_API_KEY_REF] == secret_value
+    assert "api_key" not in payload
+    assert "secret_ref" not in payload
     assert secret_value not in saved.text
-    assert "secret_ref" not in saved.text
 
     engine = get_engine(get_settings())
     try:
