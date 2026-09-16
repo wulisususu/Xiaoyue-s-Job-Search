@@ -21,6 +21,9 @@ it('renders imported jobs and keeps unverified applications gated', async () => 
           ),
         );
       }
+      if (url.endsWith('/api/sources/sync-due')) {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
       if (url.endsWith('/api/jobs/stats')) {
         return Promise.resolve(
           new Response(
@@ -60,4 +63,5 @@ it('renders imported jobs and keeps unverified applications gated', async () => 
   expect(screen.getByRole('button', { name: '验证入口' })).toBeEnabled();
   expect(screen.getByRole('button', { name: '开始申请' })).toBeDisabled();
   expect(screen.getByRole('link', { name: '查看原始入口' })).toHaveAttribute('href', 'https://example.com/apply');
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8765/api/sources/sync-due', { method: 'POST' }));
 });
