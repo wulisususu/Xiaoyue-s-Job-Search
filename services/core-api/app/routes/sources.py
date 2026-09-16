@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_engine
 from ..models import SourceSnapshot, SourceSyncRun
-from ..sources.sync import SyncResult, sync_tencent_source, sync_workfind_bundle
+from ..sources.sync import SyncResult, sync_due_sources, sync_tencent_source, sync_workfind_bundle
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
@@ -94,5 +94,17 @@ def manual_workfind_sync() -> SyncResultRead:
         with Session(engine) as session:
             cache_dir = Path(settings.data_dir) / "source-cache" / "workfind"
             return _to_read(sync_workfind_bundle(session, cache_dir=cache_dir))
+    finally:
+        engine.dispose()
+
+
+@router.post("/sync-due", response_model=list[SyncResultRead])
+def sync_due() -> list[SyncResultRead]:
+    settings = get_settings()
+    engine = get_engine(settings)
+    try:
+        with Session(engine) as session:
+            cache_dir = Path(settings.data_dir) / "source-cache" / "workfind"
+            return [_to_read(result) for result in sync_due_sources(session, cache_dir=cache_dir)]
     finally:
         engine.dispose()
