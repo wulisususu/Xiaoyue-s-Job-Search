@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -151,3 +151,63 @@ class RediscoveryCandidate(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING", index=True)
     discovered_at: Mapped[datetime] = mapped_column(default=utcnow)
     __table_args__ = (UniqueConstraint("job_id", "url", name="uq_rediscovery_job_url"),)
+
+
+class ResumeVersion(Base):
+    __tablename__ = "resume_versions"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    original_filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    file_ext: Mapped[str] = mapped_column(String(16), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    vault_relpath: Mapped[str] = mapped_column(Text, nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    extraction_status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parser_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    parser_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class ProfileField(Base):
+    __tablename__ = "profile_fields"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    field_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True, index=True)
+    value_json: Mapped[str] = mapped_column(Text, nullable=False)
+    value_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ProfileFieldRevision(Base):
+    __tablename__ = "profile_field_revisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    field_key: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    old_value_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value_json: Mapped[str] = mapped_column(Text, nullable=False)
+    value_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    changed_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
+class ProfileDraftField(Base):
+    __tablename__ = "profile_draft_fields"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    resume_version_id: Mapped[str] = mapped_column(ForeignKey("resume_versions.id", ondelete="CASCADE"), nullable=False, index=True)
+    field_key: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    value_json: Mapped[str] = mapped_column(Text, nullable=False)
+    value_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    extractor_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
