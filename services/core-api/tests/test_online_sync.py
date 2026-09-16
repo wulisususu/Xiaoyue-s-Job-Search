@@ -82,8 +82,41 @@ def test_workfind_bundle_sync_uses_remote_bytes_and_is_idempotent(tmp_path):
         assert first.companies_created == 3
         assert second.status == 'UNCHANGED'
         assert second.companies_created == 0
-        assert (tmp_path / 'cache' / 'current' / '国企数据库.db').exists()
-        assert (tmp_path / 'cache' / 'current' / '央企二级子公司.json').exists()
+        snapshot_dir = tmp_path / 'cache' / 'snapshots' / first.content_hash
+        assert (snapshot_dir / '国企数据库.db').exists()
+        assert (snapshot_dir / '央企二级子公司.json').exists()
+        assert (tmp_path / 'cache' / 'current.txt').read_text(encoding='utf-8') == first.content_hash
+
+
+def test_workfind_failed_sync_preserves_last_known_good_snapshot(tmp_path):
+    source_db = tmp_path / 'source.db'
+    good_db = _workfind_db_bytes(source_db)
+    good_relations = b'[]'
+    good_payloads = {'db': good_db, 'relations': good_relations}
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        cache = tmp_path / 'cache'
+        ok = sync_workfind_bundle(session, cache_dir=cache, fetch_bytes=lambda kind: good_payloads[kind])
+        assert ok.status == 'SUCCESS'
+        good_hash = ok.content_hash
+
+        # A corrupt relations file arrives: import must fail WITHOUT
+        # touching the last known good snapshot or the current pointer.
+        bad_payloads = {'db': good_db, 'relations': b'not-json'}
+        failed = sync_workfind_bundle(session, cache_dir=cache, fetch_bytes=lambda kind: bad_payloads[kind])
+        assert failed.status == 'FAILED'
+        assert (cache / 'current.txt').read_text(encoding='utf-8') == good_hash
+        assert (cache / 'snapshots' / good_hash / '国企数据库.db').exists()
+        assert not (cache / 'snapshots' / good_hash / '央企二级子公司.json').exists() or \
+            (cache / 'snapshots' / good_hash / '央企二级子公司.json').read_bytes() == good_relations
+        # The bad bundle must NOT have replaced the good snapshot dir.
+        assert (cache / 'snapshots' / good_hash / '央企二级子公司.json').read_bytes() == good_relations
+        # DB still points at the good snapshot.
+        from app.models import SourceSnapshot
+        snapshot = session.scalar(select(SourceSnapshot).where(SourceSnapshot.source_name == 'workfind-online'))
+        assert snapshot.local_path.endswith(good_hash)
 
 
 def test_sync_due_sources_only_refreshes_sources_past_their_interval(tmp_path, monkeypatch):

@@ -126,6 +126,19 @@ def sync_workfind_bundle(
     cache_dir: Path,
     fetch_bytes: ByteFetcher | None = None,
 ) -> SyncResult:
+    """Sync the workfind bundle into content-addressed immutable snapshots.
+
+    Layout::
+
+        cache_dir/
+        ├─ snapshots/<content_hash>/国企数据库.db
+        ├─ snapshots/<content_hash>/央企二级子公司.json
+        └─ current.txt            # pointer to the last KNOWN-GOOD hash
+
+    Downloads are written to the snapshot dir BEFORE import; the CURRENT
+    pointer is only switched (atomically) after a successful import, so a
+    failed sync can never corrupt the last known good files.
+    """
     source_name = "workfind-online"
     fetcher = fetch_bytes or _default_workfind_fetcher
     try:
@@ -134,10 +147,11 @@ def sync_workfind_bundle(
         json.loads(relations_bytes.decode("utf-8"))
         content_hash = _hash_bytes(db_bytes, relations_bytes)
 
-        current = cache_dir / "current"
-        current.mkdir(parents=True, exist_ok=True)
-        db_path = current / WORKFIND_PATHS["db"]
-        relations_path = current / WORKFIND_PATHS["relations"]
+        snapshots_dir = cache_dir / "snapshots"
+        snapshot_dir = snapshots_dir / content_hash
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        db_path = snapshot_dir / WORKFIND_PATHS["db"]
+        relations_path = snapshot_dir / WORKFIND_PATHS["relations"]
         db_path.write_bytes(db_bytes)
         relations_path.write_bytes(relations_bytes)
 
@@ -146,12 +160,13 @@ def sync_workfind_bundle(
             "relations_sha256": hashlib.sha256(relations_bytes).hexdigest(),
         })
         if _snapshot_exists(session, source_name, content_hash):
+            _switch_current_pointer(cache_dir, content_hash)
             run = record_sync_success(
                 session,
                 source_name,
                 content_hash,
                 payload_text=payload_text,
-                local_path=str(current),
+                local_path=str(snapshot_dir),
             )
             return _result(source_name, run.status, content_hash)
 
@@ -163,13 +178,31 @@ def sync_workfind_bundle(
             payload_text=payload_text,
             items_seen=summary.records_seen,
             items_created=summary.companies_created,
-            local_path=str(current),
+            local_path=str(snapshot_dir),
         )
+        _switch_current_pointer(cache_dir, content_hash)
         return _result(source_name, run.status, content_hash, summary)
     except Exception as exc:
         session.rollback()
         record_sync_failure(session, source_name, str(exc))
         return _result(source_name, "FAILED", None, error=str(exc))
+
+
+def _switch_current_pointer(cache_dir: Path, content_hash: str) -> None:
+    """Atomically repoint current.txt at a validated snapshot."""
+    pointer = cache_dir / "current.txt"
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    temp = pointer.with_suffix(".txt.tmp")
+    temp.write_text(content_hash, encoding="utf-8")
+    temp.replace(pointer)
+
+
+def read_current_snapshot_hash(cache_dir: Path) -> str | None:
+    pointer = cache_dir / "current.txt"
+    if not pointer.exists():
+        return None
+    content = pointer.read_text(encoding="utf-8").strip()
+    return content or None
 
 
 SOURCE_SYNC_INTERVALS = {
