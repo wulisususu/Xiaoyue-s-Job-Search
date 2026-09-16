@@ -24,6 +24,18 @@ npm install
 
 默认本地数据目录为 `%LOCALAPPDATA%\XiaoyueJobSearch`。可通过环境变量 `XIAOYUE_DATA_DIR` 覆盖。
 
+## 上游参考源码
+
+项目预留 `third_party/upstreams/` 作为专属上游参考区。完整源码快照放在 `third_party/upstreams/_local/`，默认不提交 Git；仓库只跟踪来源、SHA256、许可证说明和借鉴指南。
+
+当前参考上游：
+
+- WorkFind：央国企企业主库、集团关系、招聘来源与校招日历；
+- Xiaozhao Radar：招聘事件流和岗位 Feed；
+- Offer Harvester：Playwright Browser Agent、表单填写/上传、人工确认和投递追踪。
+
+重新导入本地 ZIP 快照可使用 `scripts/import_upstreams.py`，详细边界见 `third_party/upstreams/ADOPTION_GUIDE.md`。
+
 ## 当前里程碑
 
 MVP Foundation 只建立桌面壳、本地 Core API、SQLite、文件 Vault 根目录与测试基线。简历解析、招聘数据采集、Browser Agent、AI 填表将在后续里程碑接入。
