@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db import init_db
+from .routes.ai import router as ai_router
 from .routes.health import router as health_router
 from .routes.jobs import router as jobs_router
 from .routes.profile import router as profile_router
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.include_router(ai_router)
     application.include_router(health_router)
     application.include_router(jobs_router)
     application.include_router(profile_router)
