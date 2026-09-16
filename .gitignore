@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.vite/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+apps/desktop/src-tauri/target/
+.worktrees/
+local-data/
+coverage/
+.DS_Store
+
+# Local third-party source snapshots used for implementation research.
+third_party/upstreams/_local/*
+!third_party/upstreams/_local/.gitignore

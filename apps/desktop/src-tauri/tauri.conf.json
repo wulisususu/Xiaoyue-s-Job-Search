@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "小悦求职",
+  "version": "0.1.0",
+  "identifier": "com.xiaoyue.jobsearch",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {"title": "小悦求职", "width": 1280, "height": 820, "minWidth": 1024, "minHeight": 700, "resizable": true}
+    ],
+    "security": {"csp": null}
+  },
+  "bundle": {"active": false}
+}

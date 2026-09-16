@@ -1,0 +1,18 @@
+[package]
+name = "xiaoyue-job-search"
+version = "0.1.0"
+description = "Xiaoyue Job Search desktop shell"
+authors = ["Xiaoyue Job Search contributors"]
+edition = "2021"
+rust-version = "1.77.2"
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

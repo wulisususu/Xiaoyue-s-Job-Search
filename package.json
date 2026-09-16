@@ -1,0 +1,11 @@
+{
+  "name": "xiaoyue-job-search",
+  "private": true,
+  "workspaces": ["apps/desktop"],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/desktop",
+    "test:web": "npm run test --workspace apps/desktop",
+    "test:core": "python -m pytest services/core-api/tests -q",
+    "test": "npm run test:web && npm run test:core"
+  }
+}
