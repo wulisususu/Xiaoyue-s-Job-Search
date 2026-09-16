@@ -16,3 +16,7 @@ apps/desktop/src-tauri/target/
 local-data/
 coverage/
 .DS_Store
+
+# Local third-party source snapshots used for implementation research.
+third_party/upstreams/_local/*
+!third_party/upstreams/_local/.gitignore
