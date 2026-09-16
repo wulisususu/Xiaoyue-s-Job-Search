@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import Company, Job, JobSource
+from ..models import Company, Job, JobSource, UrlObservation
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -29,7 +29,11 @@ class JobRead(BaseModel):
     recruitment_batch: str
     deadline_text: str
     apply_url: str
+    canonical_url: str
     status: str
+    verification_health: str | None = None
+    ats: str | None = None
+    last_verified_at: str | None = None
     source_updated_at: str | None = None
     sources: list[str]
 
@@ -45,6 +49,8 @@ class JobStatsRead(BaseModel):
     total: int
     with_url_unverified: int
     without_url: int
+    verified_open: int
+    rediscovery_required: int
     central_soe: int
     local_soe: int
     unknown: int
@@ -84,6 +90,12 @@ def job_stats() -> JobStatsRead:
             without_url = session.scalar(
                 select(func.count(Job.id)).where(Job.status == "DISCOVERED_NO_URL")
             ) or 0
+            verified_open = session.scalar(
+                select(func.count(Job.id)).where(Job.status == "VERIFIED_OPEN")
+            ) or 0
+            rediscovery_required = session.scalar(
+                select(func.count(Job.id)).where(Job.status == "REDISCOVERY_REQUIRED")
+            ) or 0
 
             def ownership_count(value: str) -> int:
                 return int(
@@ -99,6 +111,8 @@ def job_stats() -> JobStatsRead:
                 total=int(total),
                 with_url_unverified=int(with_url),
                 without_url=int(without_url),
+                verified_open=int(verified_open),
+                rediscovery_required=int(rediscovery_required),
                 central_soe=ownership_count("central_soe"),
                 local_soe=ownership_count("local_soe"),
                 unknown=ownership_count("unknown"),
@@ -138,6 +152,12 @@ def list_jobs(
                     .distinct()
                     .order_by(JobSource.source_name)
                 ).all()
+                latest_observation = session.scalar(
+                    select(UrlObservation)
+                    .where(UrlObservation.job_id == job.id)
+                    .order_by(UrlObservation.observed_at.desc(), UrlObservation.id.desc())
+                    .limit(1)
+                )
                 items.append(
                     JobRead(
                         id=job.id,
@@ -154,7 +174,11 @@ def list_jobs(
                         recruitment_batch=job.recruitment_batch,
                         deadline_text=job.deadline_text,
                         apply_url=job.apply_url,
+                        canonical_url=job.canonical_url,
                         status=job.status,
+                        verification_health=latest_observation.health if latest_observation else None,
+                        ats=latest_observation.ats if latest_observation else None,
+                        last_verified_at=latest_observation.observed_at.isoformat() if latest_observation else None,
                         source_updated_at=job.source_updated_at,
                         sources=list(sources),
                     )
