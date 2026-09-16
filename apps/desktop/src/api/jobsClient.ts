@@ -52,6 +52,8 @@ export interface JobFilters {
   location?: string;
   status?: string;
   industry?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface SourceStatus {
@@ -102,7 +104,11 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 export function getJobs(filters: JobFilters = {}): Promise<JobListResponse> {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
-    if (value?.trim()) params.set(key, value.trim());
+    if (typeof value === 'number') {
+      params.set(key, String(value));
+    } else if (value?.trim()) {
+      params.set(key, value.trim());
+    }
   }
   const query = params.toString();
   return requestJson<JobListResponse>(`${CORE_API_BASE}/api/jobs${query ? `?${query}` : ''}`);

@@ -44,7 +44,7 @@ it('renders imported jobs and keeps unverified applications gated', async () => 
                 verification_health: 'REDIRECTED', ats: 'moka', last_verified_at: '2026-09-16T09:05:00Z', source_updated_at: '2026-09-03', sources: ['xiaozhao-radar'],
               },
             ],
-            total: 1, limit: 50, offset: 0,
+            total: 120, limit: 50, offset: 0,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -63,5 +63,10 @@ it('renders imported jobs and keeps unverified applications gated', async () => 
   expect(screen.getByRole('button', { name: '验证入口' })).toBeEnabled();
   expect(screen.getByRole('button', { name: '开始申请' })).toBeDisabled();
   expect(screen.getByRole('link', { name: '查看原始入口' })).toHaveAttribute('href', 'https://example.com/apply');
+  const prev = screen.getByRole('button', { name: '上一页' });
+  const next = screen.getByRole('button', { name: '下一页' });
+  expect(prev).toBeDisabled();
+  expect(next).toBeEnabled();
+  expect(screen.getByText(/第 1–50 条，共 120 条/)).toBeInTheDocument();
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8765/api/sources/sync-due', { method: 'POST' }));
 });

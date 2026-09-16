@@ -37,6 +37,8 @@ const statusLabel: Record<string, string> = {
   DISCOVERED_NO_URL: '待补申请入口',
   VERIFIED_OPEN: '已验证可申请',
   REDISCOVERY_REQUIRED: '入口失效待重发现',
+  STALE: '上游已失效',
+  REQUIRES_BROWSER: '需浏览器复核',
 };
 
 const atsLabel: Record<string, string> = {
@@ -61,12 +63,16 @@ const sourceStateLabels: Record<string, string> = {
   FAILED: '同步失败',
 };
 
+const PAGE_SIZE = 50;
+
 export function JobsPage() {
   const [jobs, setJobs] = useState<RadarJob[]>([]);
   const [stats, setStats] = useState<JobStats>(emptyStats);
   const [sources, setSources] = useState<SourceStatus[]>([]);
   const [filters, setFilters] = useState<JobFilters>({});
   const [draft, setDraft] = useState<JobFilters>({});
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionKey, setActionKey] = useState('');
@@ -83,10 +89,11 @@ export function JobsPage() {
     let active = true;
     setLoading(true);
     setError('');
-    Promise.all([getJobs(filters), getJobStats(), getSourceStatus()])
+    Promise.all([getJobs({ ...filters, limit: PAGE_SIZE, offset: page * PAGE_SIZE }), getJobStats(), getSourceStatus()])
       .then(([jobData, statData, sourceData]) => {
         if (!active) return;
         setJobs(jobData.items);
+        setTotal(jobData.total);
         setStats(statData);
         setSources(sourceData);
       })
@@ -97,10 +104,11 @@ export function JobsPage() {
     return () => {
       active = false;
     };
-  }, [filters, refreshKey]);
+  }, [filters, page, refreshKey]);
 
   function submitFilters(event: FormEvent) {
     event.preventDefault();
+    setPage(0);
     setFilters({ ...draft });
   }
 
@@ -221,6 +229,16 @@ export function JobsPage() {
             );
           })}
         </div>
+      )}
+
+      {!loading && !error && total > 0 && (
+        <nav className="job-pagination" aria-label="岗位分页">
+          <button className="secondary-button" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>上一页</button>
+          <span className="pagination-info">
+            第 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} 条，共 {total} 条
+          </span>
+          <button className="secondary-button" type="button" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage((value) => value + 1)}>下一页</button>
+        </nav>
       )}
     </section>
   );

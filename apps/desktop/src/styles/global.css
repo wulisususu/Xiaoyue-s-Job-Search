@@ -43,6 +43,8 @@ button, input, select, textarea { font: inherit; }
 .secondary-button { border-color: #dbe2ec; color: #36445d; background: white; cursor: pointer; }
 .secondary-button:disabled { color: #9aa5b6; background: #f5f7fa; cursor: not-allowed; }
 .job-list { display: grid; gap: 12px; margin-top: 18px; }
+.job-pagination { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 18px; }
+.pagination-info { font-size: 13px; color: #536078; }
 .job-card { display: flex; justify-content: space-between; gap: 24px; padding: 22px; border: 1px solid #e1e7f0; border-radius: 16px; background: white; box-shadow: 0 8px 24px rgba(29,44,72,.035); }
 .job-card-main { flex: 1; min-width: 0; }
 .job-card-heading { display: flex; justify-content: space-between; gap: 18px; }

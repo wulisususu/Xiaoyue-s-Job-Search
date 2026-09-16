@@ -21,6 +21,20 @@ describe('jobsClient', () => {
     );
   });
 
+  it('passes server-side pagination params to the jobs endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 50 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getJobs({ limit: 50, offset: 50 });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8765/api/jobs?limit=50&offset=50');
+  });
+
   it('loads source health and posts sync / verification actions', async () => {
     const fetchMock = vi.fn().mockImplementation(() =>
       Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } })),
