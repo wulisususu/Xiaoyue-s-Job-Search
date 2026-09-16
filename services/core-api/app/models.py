@@ -153,6 +153,22 @@ class RediscoveryCandidate(Base):
     __table_args__ = (UniqueConstraint("job_id", "url", name="uq_rediscovery_job_url"),)
 
 
+class AIProviderConfig(Base):
+    __tablename__ = "ai_provider_configs"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    provider_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    text_model: Mapped[str] = mapped_column(String(240), nullable=False)
+    vision_model: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    supports_json_schema: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    supports_vision: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    secret_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
 class ResumeVersion(Base):
     __tablename__ = "resume_versions"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
