@@ -36,11 +36,53 @@ npm install
 
 重新导入本地 ZIP 快照可使用 `scripts/import_upstreams.py`，详细边界见 `third_party/upstreams/ADOPTION_GUIDE.md`。
 
+## Job Radar Core
+
+岗位雷达当前已经接入自己的标准数据层，而不是直接读取 WorkFind / Xiaozhao 的原始文件。
+
+数据链路：
+
+```text
+WorkFind ──> Company Registry ─┐
+                               ├─> Company Resolver ─> Canonical Jobs ─> Core API ─> 岗位雷达 UI
+Xiaozhao ─> Recruitment Feed ──┘                    └─> Job Sources / Provenance
+```
+
+当前支持：
+
+- WorkFind 企业、央企/地方国企身份和央企关系导入；
+- Xiaozhao Radar `jobs.json` 导入；
+- 公司名称/别名解析；
+- URL + fingerprint 岗位去重；
+- 上游原始数据来源留档；
+- `/api/jobs` 查询与筛选；
+- `/api/jobs/stats` 雷达统计；
+- 桌面端岗位卡片、企业性质、入口状态和基础筛选。
+
+### 导入本地上游数据
+
+先使用 `scripts/import_upstreams.py` 将三个 ZIP 恢复到 `_local/`，然后执行：
+
+```powershell
+python .\scripts\import_job_sources.py `
+  --workfind-db .\third_party\upstreams\_local\workfind\国企数据库.db `
+  --workfind-relations .\third_party\upstreams\_local\workfind\央企二级子公司.json `
+  --xiaozhao-jobs .\third_party\upstreams\_local\xiaozhao-radar\jobs.json `
+  --data-dir .\local-data\job-radar
+```
+
+当前用户提供快照的实际导入结果：
+
+- WorkFind：2271 个企业 Source、111 条可明确建立的央企关系；
+- Xiaozhao：1598 条 source rows 去重为 1486 个 canonical jobs；
+- 其中 1125 个岗位有 URL 但仍是“入口待验证”；
+- 361 个 canonical jobs 当前没有 URL。
+
+**有 URL 不等于岗位已验证开放。** Xiaozhao 产生的 URL 当前统一保持 `DISCOVERED_URL_UNVERIFIED`，只有后续官方 URL Verifier 确认后才能升级为 `VERIFIED_OPEN` 并启用“开始申请”。完整状态和数据结构见 `doc/JOB_RADAR_DATA_MODEL.md`。
+
 ## 当前里程碑
 
-MVP Foundation 只建立桌面壳、本地 Core API、SQLite、文件 Vault 根目录与测试基线。简历解析、招聘数据采集、Browser Agent、AI 填表将在后续里程碑接入。
-
-## MVP Foundation 验收清单
+### MVP Foundation
 
 - [x] Local API 提供 `/api/health`
 - [x] SQLite 数据库写入 `XIAOYUE_DATA_DIR`
@@ -51,3 +93,19 @@ MVP Foundation 只建立桌面壳、本地 Core API、SQLite、文件 Vault 根�
 - [x] Web 测试通过（GitHub Actions Windows Runner）
 - [x] Frontend production build 通过（GitHub Actions Windows Runner）
 - [x] Tauri Cargo metadata 通过（GitHub Actions Windows Runner）
+
+### Job Radar Core
+
+- [x] Canonical Company / Job / Source 数据模型
+- [x] WorkFind Importer
+- [x] Xiaozhao Importer
+- [x] Company Resolver
+- [x] Job Deduper
+- [x] Job Radar API
+- [x] 第一版岗位雷达 UI
+- [x] 聚合 URL 默认保持“待验证”，不误标为可申请
+- [ ] 官方 Apply URL Verifier
+- [ ] ATS 类型识别
+- [ ] Browser Agent 与“开始申请”联动
+
+下一阶段优先实现 **Apply URL Verifier + ATS Detector**，让发现到的入口经过官方页面验证后，才进入 Browser Agent 自动投递链路。
