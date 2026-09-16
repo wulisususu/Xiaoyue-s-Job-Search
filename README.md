@@ -36,6 +36,6 @@ MVP Foundation 只建立桌面壳、本地 Core API、SQLite、文件 Vault 根�
 - [x] 桌面 UI 定义六个一级入口：首页、岗位雷达、投递中心、我的资料、简历库、设置
 - [x] UI 接入本地 Core 健康状态
 - [x] Core pytest 基线已建立
-- [ ] Web 测试通过（由 GitHub Actions / 本机 npm install 后验证）
-- [ ] Frontend production build 通过（由 GitHub Actions / 本机 npm install 后验证）
-- [ ] Tauri Cargo metadata 通过（由 GitHub Actions / 安装 Rust 后验证）
+- [x] Web 测试通过（GitHub Actions Windows Runner）
+- [x] Frontend production build 通过（GitHub Actions Windows Runner）
+- [x] Tauri Cargo metadata 通过（GitHub Actions Windows Runner）
