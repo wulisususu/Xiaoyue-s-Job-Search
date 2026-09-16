@@ -82,3 +82,28 @@ button, input, select, textarea { font: inherit; }
   .source-health-header { flex-direction: column; }
   .source-actions { justify-content: flex-start; }
 }
+
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
+.resume-import-button.disabled { background: #d6dce5; color: #8995a6; cursor: progress; }
+.resume-summary { display: grid; grid-template-columns: 150px 150px 1fr; gap: 12px; align-items: stretch; margin-bottom: 18px; }
+.resume-summary > div, .resume-summary > p { margin: 0; padding: 16px 18px; border: 1px solid #e1e7f0; border-radius: 14px; background: white; }
+.resume-summary strong { display: block; font-size: 25px; }
+.resume-summary span { display: block; margin-top: 5px; color: #758198; font-size: 12px; }
+.resume-summary p { color: #68768c; font-size: 12px; line-height: 1.7; }
+.resume-message { margin: 0 0 14px; padding: 11px 13px; border-radius: 10px; font-size: 12px; }
+.resume-message.success { background: #e9f7ef; color: #247a4d; }
+.resume-message.error { background: #fff0ee; color: #b34437; }
+.resume-list { display: grid; gap: 12px; }
+.resume-card { padding: 20px 22px; border: 1px solid #e1e7f0; border-radius: 16px; background: white; box-shadow: 0 8px 24px rgba(29,44,72,.035); }
+.resume-card-main { min-width: 0; }
+.resume-card-heading { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+.resume-card h2 { margin: 10px 0 0; font-size: 18px; word-break: break-all; }
+.resume-version { background: #eef1ff; color: #4d57a7; }
+.resume-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; color: #758198; font-size: 12px; }
+.resume-note { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #edf0f4; color: #718096; font-size: 12px; line-height: 1.65; }
+.resume-note.warning-note { color: #8a6416; }
+.resume-note.error-note { color: #b34437; }
+@media (max-width: 1100px) {
+  .resume-summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .resume-summary > p { grid-column: 1 / -1; }
+}
