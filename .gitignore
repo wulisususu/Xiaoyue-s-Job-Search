@@ -20,3 +20,5 @@ coverage/
 # Local third-party source snapshots used for implementation research.
 third_party/upstreams/_local/*
 !third_party/upstreams/_local/.gitignore
+
+xiaoyue_core_api.egg-info/

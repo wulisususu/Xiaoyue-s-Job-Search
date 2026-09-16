@@ -16,15 +16,20 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Idempotent: databases created via Base.metadata.create_all before
+    # alembic was introduced already carry these columns but have no
+    # alembic_version row, so the first upgrade must tolerate them.
+    inspector = sa.inspect(op.get_bind())
+    cols = {c["name"] for c in inspector.get_columns("job_sources")}
     with op.batch_alter_table("job_sources") as batch:
-        batch.add_column(sa.Column("record_hash", sa.String(length=64), nullable=True))
-        batch.add_column(
-            sa.Column("status", sa.String(length=20), nullable=False, server_default="ACTIVE")
-        )
-    op.create_index("ix_job_sources_status", "job_sources", ["status"])
-
-    # Records imported before the stable-identity change used a whole-record
-    # JSON hash as source_record_key. Backfill status so nothing is stranded.
+        if "record_hash" not in cols:
+            batch.add_column(sa.Column("record_hash", sa.String(length=64), nullable=True))
+        if "status" not in cols:
+            batch.add_column(
+                sa.Column("status", sa.String(length=20), nullable=False, server_default="ACTIVE")
+            )
+    if "status" not in cols:
+        op.create_index("ix_job_sources_status", "job_sources", ["status"])
     op.execute("UPDATE job_sources SET status = 'ACTIVE' WHERE status IS NULL OR status = ''")
 
 

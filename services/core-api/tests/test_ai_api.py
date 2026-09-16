@@ -90,7 +90,6 @@ def test_api_key_uses_dedicated_secret_endpoint_and_never_returns_secret(client,
     assert saved.status_code == 200
     payload = saved.json()
     assert payload["has_api_key"] is True
-    assert store.values[DEFAULT_AI_API_KEY_REF] == secret_value
     assert "api_key" not in payload
     assert "secret_ref" not in payload
     assert secret_value not in saved.text
@@ -100,7 +99,11 @@ def test_api_key_uses_dedicated_secret_endpoint_and_never_returns_secret(client,
         with Session(engine) as session:
             row = session.get(AIProviderConfig, "default")
             assert row is not None
-            assert row.secret_ref == DEFAULT_AI_API_KEY_REF
+            # The key lives under a unique rotation ref, never a predictable
+            # shared one, and never leaks into DB columns.
+            assert row.secret_ref is not None
+            assert row.secret_ref.startswith(DEFAULT_AI_API_KEY_REF)
+            assert store.values[row.secret_ref] == secret_value
             assert secret_value not in "|".join(
                 str(value)
                 for value in (
@@ -118,7 +121,7 @@ def test_api_key_uses_dedicated_secret_endpoint_and_never_returns_secret(client,
     removed = client.delete("/api/ai/provider/api-key")
     assert removed.status_code == 200
     assert removed.json()["has_api_key"] is False
-    assert DEFAULT_AI_API_KEY_REF not in store.values
+    assert all(not ref.startswith(DEFAULT_AI_API_KEY_REF) for ref in store.values)
 
     engine = get_engine(get_settings())
     try:

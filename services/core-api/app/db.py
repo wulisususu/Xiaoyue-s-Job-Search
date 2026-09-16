@@ -1,4 +1,6 @@
-from sqlalchemy import Engine, create_engine, event
+from pathlib import Path
+
+from sqlalchemy import Engine, create_engine, event, inspect
 from sqlalchemy.orm import Session
 
 from .config import AppSettings, get_settings
@@ -25,10 +27,46 @@ def get_engine(settings: AppSettings | None = None) -> Engine:
     return engine
 
 
+def _alembic_config(settings: AppSettings):
+    from alembic.config import Config
+
+    core_root = Path(__file__).resolve().parents[1]
+    config = Config(core_root / "alembic.ini")
+    config.set_main_option("script_location", str(core_root / "alembic"))
+    config.attributes["db_url"] = f"sqlite:///{settings.database_path}"
+    return config
+
+
+def _run_migrations(settings: AppSettings) -> None:
+    from alembic import command
+
+    command.upgrade(_alembic_config(settings), "head")
+
+
 def init_db(settings: AppSettings | None = None) -> None:
-    engine = get_engine(settings)
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    """Prepare the database schema.
+
+    - Fresh database: create all tables from the models, then stamp the
+      alembic revision so future startups only run incremental migrations.
+    - Existing database: run `alembic upgrade head` so added columns land on
+      user data instead of silently diverging (create_all never ALTERs).
+    """
+    resolved = settings or get_settings()
+    resolved.data_dir.mkdir(parents=True, exist_ok=True)
+    resolved.vault_dir.mkdir(parents=True, exist_ok=True)
+    engine = get_engine(resolved)
+    try:
+        inspector = inspect(engine)
+        if not inspector.get_table_names():
+            Base.metadata.create_all(engine)
+            engine.dispose()
+            from alembic import command
+
+            command.stamp(_alembic_config(resolved), "head")
+            return
+    finally:
+        engine.dispose()
+    _run_migrations(resolved)
 
 
 def open_session(settings: AppSettings | None = None) -> Session:

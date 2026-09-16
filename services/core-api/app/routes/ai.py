@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -145,22 +147,34 @@ def put_provider_api_key(body: AIAPIKeyWrite) -> AIProviderRead:
             if config is None:
                 raise HTTPException(status_code=409, detail="Configure the AI provider before saving an API key")
 
+            # Near-transactional rotation across two stores (keyring + DB):
+            # write the key under a FRESH unique ref, switch the DB pointer
+            # to it, and only after a successful commit delete the old ref.
+            # Any failure along the way leaves the previous key + ref pair
+            # fully intact.
             store = get_secret_store()
+            new_ref = f"{DEFAULT_AI_API_KEY_REF}:{uuid.uuid4().hex}"
+            old_ref = config.secret_ref
             try:
-                store.set_secret(DEFAULT_AI_API_KEY_REF, api_key)
+                store.set_secret(new_ref, api_key)
             except CredentialStoreUnavailableError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-            config.secret_ref = DEFAULT_AI_API_KEY_REF
+            config.secret_ref = new_ref
             try:
                 session.commit()
             except Exception:
                 session.rollback()
                 try:
-                    store.delete_secret(DEFAULT_AI_API_KEY_REF)
+                    store.delete_secret(new_ref)
                 except CredentialStoreUnavailableError:
                     pass
                 raise
+            if old_ref and old_ref != new_ref:
+                try:
+                    store.delete_secret(old_ref)
+                except CredentialStoreUnavailableError:
+                    pass
             session.refresh(config)
             return _provider_read(config)
     finally:
@@ -176,13 +190,22 @@ def delete_provider_api_key() -> AIProviderRead:
             if config is None:
                 raise HTTPException(status_code=409, detail="AI provider is not configured")
 
-            if config.secret_ref:
-                try:
-                    get_secret_store().delete_secret(config.secret_ref)
-                except CredentialStoreUnavailableError as exc:
-                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+            # Point the DB at "no key" FIRST, commit, and only then remove
+            # the credential: if the commit fails the keyring entry is still
+            # referenced and usable; if the keyring delete fails afterwards
+            # the leftover secret is unreferenced and harmless.
+            old_ref = config.secret_ref
             config.secret_ref = None
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            if old_ref:
+                try:
+                    get_secret_store().delete_secret(old_ref)
+                except CredentialStoreUnavailableError:
+                    pass
             session.refresh(config)
             return _provider_read(config)
     finally:

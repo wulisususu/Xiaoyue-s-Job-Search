@@ -6,7 +6,8 @@ from sqlalchemy import engine_from_config, pool
 from app.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", "sqlite:///local.db")
+url = config.attributes.get("db_url") or "sqlite:///local.db"
+config.set_main_option("sqlalchemy.url", url)
 target_metadata = Base.metadata
 
 

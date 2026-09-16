@@ -13,6 +13,7 @@ from ..models import ProfileDraftField, ResumeVersion
 from ..profile.registry import get_field_definition
 from ..profile.service import create_resume_drafts
 from ..resumes.vault import (
+    MAX_RESUME_BYTES,
     InvalidResumeError,
     ResumeTooLargeError,
     UnsupportedResumeTypeError,
@@ -117,7 +118,17 @@ async def import_resume(file: UploadFile = File(...)) -> ResumeImportRead:
     settings = get_settings()
     engine = get_engine(settings)
     try:
-        data = await file.read()
+        chunks: list[bytes] = []
+        received = 0
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > MAX_RESUME_BYTES:
+                raise HTTPException(status_code=413, detail="Resume exceeds the 50 MiB limit")
+            chunks.append(chunk)
+        data = b"".join(chunks)
         with Session(engine) as session:
             try:
                 resume, deduplicated = validate_and_store_resume(

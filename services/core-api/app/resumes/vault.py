@@ -156,3 +156,45 @@ def validate_and_store_resume(
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
         raise
+
+
+def read_upload_limited(file_obj, max_bytes: int = MAX_RESUME_BYTES) -> bytes:
+    """Read an upload in chunks, refusing to buffer more than max_bytes.
+
+    Unlike reading the whole upload into memory first, the size limit stops
+    the transfer instead of merely rejecting after full ingestion.
+    """
+    chunks: list[bytes] = []
+    received = 0
+    while True:
+        chunk = file_obj.read(1024 * 1024)
+        if not chunk:
+            break
+        received += len(chunk)
+        if received > max_bytes:
+            raise ResumeTooLargeError("Resume exceeds the 50 MiB limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def reconcile_vault(session: Session, settings: AppSettings) -> int:
+    """Delete content-addressed vault files that no DB row references.
+
+    A crash between writing the vault file and committing the ResumeVersion
+    row can leave orphan files behind; this sweep removes them. Returns the
+    number of removed content directories.
+    """
+    known_shas = set(session.scalars(select(ResumeVersion.sha256)).all())
+    resumes_root = settings.vault_dir / "resumes"
+    if not resumes_root.is_dir():
+        return 0
+    removed = 0
+    for entry in resumes_root.iterdir():
+        if not entry.is_dir() or entry.name in known_shas:
+            continue
+        for child in sorted(entry.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink(missing_ok=True)
+        entry.rmdir()
+        removed += 1
+    return removed
