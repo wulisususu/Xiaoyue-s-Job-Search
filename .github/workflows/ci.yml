@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+
+jobs:
+  foundation:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install web dependencies
+        run: npm install
+      - name: Install core dependencies
+        run: python -m pip install -e ".\services\core-api[dev]"
+      - name: Test web
+        run: npm run test:web
+      - name: Test core
+        run: python -m pytest services/core-api/tests -q
+      - name: Build web
+        run: npm run build --workspace apps/desktop
+      - name: Validate Tauri Cargo metadata
+        run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --no-deps
