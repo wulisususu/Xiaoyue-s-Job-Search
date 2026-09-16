@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import urllib.parse
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 from ..integrations.types import ImportSummary
 from ..integrations.workfind import import_workfind
 from ..integrations.xiaozhao import import_xiaozhao_payload
-from ..models import SourceSnapshot
+from ..models import SourceSnapshot, SourceSyncRun
 from .store import record_sync_failure, record_sync_success
 from .tencent_sheet import fetch_tencent_payload
 
@@ -22,7 +23,10 @@ PayloadLoader = Callable[[], dict]
 ByteFetcher = Callable[[str], bytes]
 
 WORKFIND_BASE = "https://gitee.com/zxasoul/workfind/raw/master/"
-WORKFIND_PATHS = {"db": "国企数据库.db", "relations": "央企二级子公司.json"}
+WORKFIND_PATHS = {
+    "db": "国企数据库.db",
+    "relations": "央企二级子公司.json",
+}
 
 
 @dataclass(slots=True)
@@ -51,12 +55,27 @@ def _hash_bytes(*parts: bytes) -> str:
 
 
 def _snapshot_exists(session: Session, source_name: str, content_hash: str) -> bool:
-    return session.scalar(select(SourceSnapshot.id).where(SourceSnapshot.source_name == source_name, SourceSnapshot.content_hash == content_hash)) is not None
+    return session.scalar(
+        select(SourceSnapshot.id).where(
+            SourceSnapshot.source_name == source_name,
+            SourceSnapshot.content_hash == content_hash,
+        )
+    ) is not None
 
 
 def _result(source_name: str, status: str, content_hash: str | None, summary: ImportSummary | None = None, error: str | None = None) -> SyncResult:
     summary = summary or ImportSummary()
-    return SyncResult(source_name=source_name, status=status, content_hash=content_hash, records_seen=summary.records_seen, companies_created=summary.companies_created, jobs_created=summary.jobs_created, sources_created=summary.sources_created, relations_created=summary.relations_created, error=error)
+    return SyncResult(
+        source_name=source_name,
+        status=status,
+        content_hash=content_hash,
+        records_seen=summary.records_seen,
+        companies_created=summary.companies_created,
+        jobs_created=summary.jobs_created,
+        sources_created=summary.sources_created,
+        relations_created=summary.relations_created,
+        error=error,
+    )
 
 
 def sync_tencent_source(session: Session, payload_loader: PayloadLoader | None = None) -> SyncResult:
@@ -67,10 +86,26 @@ def sync_tencent_source(session: Session, payload_loader: PayloadLoader | None =
         raw = _json_payload_bytes(payload)
         content_hash = _hash_bytes(raw)
         if _snapshot_exists(session, source_name, content_hash):
-            run = record_sync_success(session, source_name, content_hash, raw.decode("utf-8"), remote_version=str(payload.get("updated") or "") or None, items_seen=int(payload.get("count") or 0))
+            run = record_sync_success(
+                session,
+                source_name,
+                content_hash,
+                raw.decode("utf-8"),
+                remote_version=str(payload.get("updated") or "") or None,
+                items_seen=int(payload.get("count") or 0),
+            )
             return _result(source_name, run.status, content_hash)
+
         summary = import_xiaozhao_payload(session, payload, source_name=source_name)
-        run = record_sync_success(session, source_name, content_hash, raw.decode("utf-8"), remote_version=str(payload.get("updated") or "") or None, items_seen=summary.records_seen, items_created=summary.jobs_created)
+        run = record_sync_success(
+            session,
+            source_name,
+            content_hash,
+            raw.decode("utf-8"),
+            remote_version=str(payload.get("updated") or "") or None,
+            items_seen=summary.records_seen,
+            items_created=summary.jobs_created,
+        )
         return _result(source_name, run.status, content_hash, summary)
     except Exception as exc:
         session.rollback()
@@ -86,7 +121,11 @@ def _default_workfind_fetcher(kind: str) -> bytes:
         return response.read()
 
 
-def sync_workfind_bundle(session: Session, cache_dir: Path, fetch_bytes: ByteFetcher | None = None) -> SyncResult:
+def sync_workfind_bundle(
+    session: Session,
+    cache_dir: Path,
+    fetch_bytes: ByteFetcher | None = None,
+) -> SyncResult:
     source_name = "workfind-online"
     fetcher = fetch_bytes or _default_workfind_fetcher
     try:
@@ -94,20 +133,76 @@ def sync_workfind_bundle(session: Session, cache_dir: Path, fetch_bytes: ByteFet
         relations_bytes = fetcher("relations")
         json.loads(relations_bytes.decode("utf-8"))
         content_hash = _hash_bytes(db_bytes, relations_bytes)
+
         current = cache_dir / "current"
         current.mkdir(parents=True, exist_ok=True)
         db_path = current / WORKFIND_PATHS["db"]
         relations_path = current / WORKFIND_PATHS["relations"]
         db_path.write_bytes(db_bytes)
         relations_path.write_bytes(relations_bytes)
-        payload_text = json.dumps({"db_sha256": hashlib.sha256(db_bytes).hexdigest(), "relations_sha256": hashlib.sha256(relations_bytes).hexdigest()})
+
+        payload_text = json.dumps({
+            "db_sha256": hashlib.sha256(db_bytes).hexdigest(),
+            "relations_sha256": hashlib.sha256(relations_bytes).hexdigest(),
+        })
         if _snapshot_exists(session, source_name, content_hash):
-            run = record_sync_success(session, source_name, content_hash, payload_text=payload_text, local_path=str(current))
+            run = record_sync_success(
+                session,
+                source_name,
+                content_hash,
+                payload_text=payload_text,
+                local_path=str(current),
+            )
             return _result(source_name, run.status, content_hash)
+
         summary = import_workfind(session, db_path, relations_path)
-        run = record_sync_success(session, source_name, content_hash, payload_text=payload_text, items_seen=summary.records_seen, items_created=summary.companies_created, local_path=str(current))
+        run = record_sync_success(
+            session,
+            source_name,
+            content_hash,
+            payload_text=payload_text,
+            items_seen=summary.records_seen,
+            items_created=summary.companies_created,
+            local_path=str(current),
+        )
         return _result(source_name, run.status, content_hash, summary)
     except Exception as exc:
         session.rollback()
         record_sync_failure(session, source_name, str(exc))
         return _result(source_name, "FAILED", None, error=str(exc))
+
+
+SOURCE_SYNC_INTERVALS = {
+    "tencent-sheet": dt.timedelta(hours=6),
+    "workfind-online": dt.timedelta(hours=24),
+}
+
+
+def _source_sync_due(session: Session, source_name: str, now: dt.datetime) -> bool:
+    latest = session.scalar(
+        select(SourceSyncRun)
+        .where(SourceSyncRun.source_name == source_name)
+        .order_by(SourceSyncRun.finished_at.desc(), SourceSyncRun.id.desc())
+        .limit(1)
+    )
+    if latest is None:
+        return True
+    finished_at = latest.finished_at
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=dt.timezone.utc)
+    interval = dt.timedelta(hours=1) if latest.status == "FAILED" else SOURCE_SYNC_INTERVALS[source_name]
+    return finished_at + interval <= now
+
+
+def sync_due_sources(
+    session: Session,
+    cache_dir: Path,
+    now: dt.datetime | None = None,
+) -> list[SyncResult]:
+    resolved_now = now or dt.datetime.now(dt.timezone.utc)
+    results: list[SyncResult] = []
+    if _source_sync_due(session, "tencent-sheet", resolved_now):
+        results.append(sync_tencent_source(session))
+    if _source_sync_due(session, "workfind-online", resolved_now):
+        results.append(sync_workfind_bundle(session, cache_dir=cache_dir))
+    return results
