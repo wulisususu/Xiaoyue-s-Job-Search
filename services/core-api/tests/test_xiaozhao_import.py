@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.integrations.workfind import import_workfind
-from app.integrations.xiaozhao import import_xiaozhao
+from app.integrations.xiaozhao import import_xiaozhao, import_xiaozhao_payload
 from app.models import Base, Company, Job, JobSource
 
 
@@ -81,7 +81,9 @@ def test_import_xiaozhao_maps_fields_status_and_reuses_workfind_company(tmp_path
         assert unknown.ownership == 'unknown'
 
         sources = session.scalars(select(JobSource)).all()
-        assert len(sources) == 3
+        # Records 1 and 3 share the same URL, so they share ONE stable source
+        # identity; record 2 has no URL and gets its own.
+        assert len(sources) == 2
         assert all(source.source_name == 'xiaozhao-radar' for source in sources)
 
 
@@ -99,4 +101,81 @@ def test_import_xiaozhao_is_idempotent(tmp_path: Path):
         assert second.jobs_created == 0
         assert second.companies_created == 0
         assert len(session.scalars(select(Job)).all()) == 2
-        assert len(session.scalars(select(JobSource)).all()) == 3
+        assert len(session.scalars(select(JobSource)).all()) == 2
+
+
+def test_upstream_edits_propagate_to_canonical_job(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    Base.metadata.create_all(engine)
+    url = 'https://jobs.example.com/apply/9'
+
+    def payload(title, location, deadline, updated):
+        return {
+            'updated': updated,
+            'count': 1,
+            'jobs': [{
+                'c': '中国移动', 'p': title, 'l': location, 'e': '',
+                'w': '批次:27届秋招', 'd': deadline, 's': '腾讯文档校招雷达',
+                't': '其他', 'ind': '通信', 'u': url,
+            }],
+        }
+
+    with Session(engine) as session:
+        import_xiaozhao_payload(session, payload('视觉设计师', '南京', '9月20日', '2026-09-10'))
+        job = session.scalar(select(Job))
+        source = session.scalar(select(JobSource))
+        assert job.title == '视觉设计师' and job.deadline_text == '9月20日'
+        assert source.status == 'ACTIVE'
+
+        # Same URL, completely rewritten record: must UPDATE, not duplicate.
+        summary = import_xiaozhao_payload(
+            session, payload('视觉设计师（品牌视觉方向）', '南京 / 上海', '10月10日', '2026-09-17')
+        )
+        assert summary.jobs_created == 0
+        assert summary.sources_created == 0
+        assert summary.sources_updated == 1
+
+        jobs = session.scalars(select(Job)).all()
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.title == '视觉设计师（品牌视觉方向）'
+        assert job.location == '南京 / 上海'
+        assert job.deadline_text == '10月10日'
+        assert job.source_updated_at == '2026-09-17'
+        assert len(session.scalars(select(JobSource)).all()) == 1
+
+
+def test_removed_record_is_staled_and_reappearing_record_is_revived(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    Base.metadata.create_all(engine)
+
+    def payload(*titles):
+        return {
+            'updated': '2026-09-17',
+            'count': len(titles),
+            'jobs': [{
+                'c': '中国移动', 'p': title, 'l': '南京', 'e': '',
+                'w': '批次:27届秋招', 'd': '招满即止', 's': '腾讯文档校招雷达',
+                't': '其他', 'ind': '通信', 'u': f'https://jobs.example.com/apply/{idx}',
+            } for idx, title in enumerate(titles)],
+        }
+
+    with Session(engine) as session:
+        import_xiaozhao_payload(session, payload('岗位A', '岗位B'))
+        assert len(session.scalars(select(JobSource)).all()) == 2
+
+        # 岗位B disappears upstream.
+        summary = import_xiaozhao_payload(session, payload('岗位A'))
+        assert summary.sources_staled == 1
+        assert summary.jobs_staled == 1
+        staled = session.scalars(select(Job).where(Job.title == '岗位B')).one()
+        assert staled.status == 'STALE'
+        staled_source = session.scalars(select(JobSource).where(JobSource.status == 'STALE')).one()
+        assert staled_source.job_id == staled.id
+
+        # 岗位B comes back: both source and job return to ACTIVE.
+        summary = import_xiaozhao_payload(session, payload('岗位A', '岗位B'))
+        assert summary.sources_created == 0
+        revived = session.scalars(select(Job).where(Job.title == '岗位B')).one()
+        assert revived.status == 'DISCOVERED_URL_UNVERIFIED'
+        assert session.scalar(select(JobSource).where(JobSource.status == 'STALE')) is None

@@ -89,6 +89,8 @@ class JobSource(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     source_name: Mapped[str] = mapped_column(String(80), nullable=False)
     source_record_key: Mapped[str] = mapped_column(String(96), nullable=False)
+    record_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", index=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
     raw_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
