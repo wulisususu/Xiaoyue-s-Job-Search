@@ -144,20 +144,37 @@ def list_jobs(
             rows = session.execute(
                 base.order_by(Job.source_updated_at.desc(), Company.name, Job.title).offset(offset).limit(limit)
             ).all()
+
+            # Bulk-load per-job sources and the latest URL observation in two
+            # extra queries instead of 2N round trips (N+1 elimination).
+            job_ids = [job.id for job, _ in rows]
+            sources_map: dict[str, list[str]] = {}
+            observations: dict[str, UrlObservation] = {}
+            if job_ids:
+                sources_map = {job_id: [] for job_id in job_ids}
+                for job_id, source_name in session.execute(
+                    select(JobSource.job_id, JobSource.source_name)
+                    .where(JobSource.job_id.in_(job_ids))
+                    .distinct()
+                    .order_by(JobSource.job_id, JobSource.source_name)
+                ):
+                    sources_map[job_id].append(source_name)
+                # The observation id is autoincrement, so the max id per job
+                # is the most recent observation.
+                latest_id_per_job = (
+                    select(func.max(UrlObservation.id).label("id"))
+                    .where(UrlObservation.job_id.in_(job_ids))
+                    .group_by(UrlObservation.job_id)
+                    .subquery()
+                )
+                latest_rows = session.scalars(
+                    select(UrlObservation).where(UrlObservation.id.in_(select(latest_id_per_job.c.id)))
+                )
+                observations = {obs.job_id: obs for obs in latest_rows}
+
             items: list[JobRead] = []
             for job, company in rows:
-                sources = session.scalars(
-                    select(JobSource.source_name)
-                    .where(JobSource.job_id == job.id)
-                    .distinct()
-                    .order_by(JobSource.source_name)
-                ).all()
-                latest_observation = session.scalar(
-                    select(UrlObservation)
-                    .where(UrlObservation.job_id == job.id)
-                    .order_by(UrlObservation.observed_at.desc(), UrlObservation.id.desc())
-                    .limit(1)
-                )
+                latest_observation = observations.get(job.id)
                 items.append(
                     JobRead(
                         id=job.id,
@@ -180,7 +197,7 @@ def list_jobs(
                         ats=latest_observation.ats if latest_observation else None,
                         last_verified_at=latest_observation.observed_at.isoformat() if latest_observation else None,
                         source_updated_at=job.source_updated_at,
-                        sources=list(sources),
+                        sources=list(sources_map.get(job.id, [])),
                     )
                 )
             return JobListRead(items=items, total=total, limit=limit, offset=offset)

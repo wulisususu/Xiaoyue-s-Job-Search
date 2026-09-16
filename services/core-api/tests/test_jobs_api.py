@@ -77,3 +77,29 @@ def test_job_stats_reports_verification_state_and_ownership(client):
         'local_soe': 1,
         'unknown': 0,
     }
+
+
+def test_jobs_api_does_not_query_per_job(client):
+    """Regression guard for the N+1: listing N jobs must stay at a bounded
+    number of SELECTs regardless of N (jobs + count + sources + observations)."""
+    from sqlalchemy import event
+
+    _seed_jobs()
+    engine = get_engine(get_settings())
+    select_count = {'n': 0}
+
+    def count_selects(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith('SELECT'):
+            select_count['n'] += 1
+
+    event.listen(engine, 'before_cursor_execute', count_selects)
+    try:
+        data = client.get('/api/jobs').json()
+        assert data['total'] == 2
+        first = next(item for item in data['items'] if item['id'] == 'job-central')
+        assert first['sources'] == ['xiaozhao-radar']
+        assert first['verification_health'] == 'REDIRECTED'
+        assert select_count['n'] <= 4
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_selects)
+        engine.dispose()
