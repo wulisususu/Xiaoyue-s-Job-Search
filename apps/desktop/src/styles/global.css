@@ -40,7 +40,8 @@ button, input, select, textarea { font: inherit; }
 .primary-button, .secondary-button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 15px; border-radius: 10px; font-weight: 700; text-decoration: none; border: 1px solid transparent; }
 .primary-button { background: #172033; color: white; cursor: pointer; }
 .primary-button:disabled { background: #d6dce5; color: #8995a6; cursor: not-allowed; }
-.secondary-button { border-color: #dbe2ec; color: #36445d; background: white; }
+.secondary-button { border-color: #dbe2ec; color: #36445d; background: white; cursor: pointer; }
+.secondary-button:disabled { color: #9aa5b6; background: #f5f7fa; cursor: not-allowed; }
 .job-list { display: grid; gap: 12px; margin-top: 18px; }
 .job-card { display: flex; justify-content: space-between; gap: 24px; padding: 22px; border: 1px solid #e1e7f0; border-radius: 16px; background: white; box-shadow: 0 8px 24px rgba(29,44,72,.035); }
 .job-card-main { flex: 1; min-width: 0; }
@@ -59,4 +60,25 @@ button, input, select, textarea { font: inherit; }
 @media (max-width: 1280px) {
   .radar-stat-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
   .job-filters { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+.source-health-panel { margin-bottom: 18px; padding: 18px; border: 1px solid #e1e7f0; border-radius: 16px; background: white; }
+.source-health-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.source-health-header h2 { margin: 0 0 5px; font-size: 16px; }
+.source-health-header p { margin: 0; color: #7b879a; font-size: 12px; line-height: 1.6; }
+.source-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.source-health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.source-health-card { padding: 13px 14px; border: 1px solid #e7ebf1; border-radius: 12px; background: #fafbfd; }
+.source-health-card > div { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.source-health-card p { margin: 7px 0 0; color: #7b879a; font-size: 11px; }
+.source-health-state { padding: 4px 7px; border-radius: 999px; font-size: 10px; font-weight: 800; background: #eef1f6; color: #66758b; }
+.source-health-state.ok { background: #e9f7ef; color: #247a4d; }
+.source-health-state.failed { background: #fff0ee; color: #b34437; }
+.source-health-card .source-error { color: #b34437; }
+.action-message { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #edf0f4; color: #536078; font-size: 12px; }
+.ats-badge { background: #eef1ff; color: #4d57a7; }
+.job-verification { margin: 7px 0 0; color: #78859a; font-size: 11px; }
+@media (max-width: 1280px) {
+  .source-health-header { flex-direction: column; }
+  .source-actions { justify-content: flex-start; }
 }
