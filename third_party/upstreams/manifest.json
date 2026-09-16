@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-09-16",
+  "snapshot_policy": "complete sources are stored under third_party/upstreams/_local and ignored by Git; tracked files contain only metadata, licenses, and adoption guidance",
+  "upstreams": [
+    {
+      "name": "offer-harvester",
+      "upstream": "https://github.com/JiemsLBJ/offer-harvester",
+      "archive": "offer-harvester-main.zip",
+      "sha256": "daa58da0e7cdaaaffcbdbd5c7becc35b4770755ab8977142ffc078e1cfc50047",
+      "license": "MIT",
+      "local_path": "third_party/upstreams/_local/offer-harvester",
+      "role": "browser automation and application pipeline reference"
+    },
+    {
+      "name": "workfind",
+      "upstream": "https://github.com/nailing10086-zx/workfind",
+      "archive": "workfind-master.zip",
+      "sha256": "8d902dd505e9a7dd8c2db130ae3d3f71a51a935a323d0e212fa6d53da256a7ff",
+      "license": "MIT (declared in supplied README; supplied archive has no standalone LICENSE file)",
+      "local_path": "third_party/upstreams/_local/workfind",
+      "role": "SOE company registry and recruitment source reference"
+    },
+    {
+      "name": "xiaozhao-radar",
+      "upstream": "https://github.com/jiabaobei/xiaozhao-radar",
+      "archive": "xiaozhao-radar-main.zip",
+      "sha256": "64c013c5af7f4db7a6fd1261c68169faaeff9049bb454382267b0954cff0e5b9",
+      "license": "Apache-2.0",
+      "local_path": "third_party/upstreams/_local/xiaozhao-radar",
+      "role": "campus recruitment job feed and synchronization reference"
+    }
+  ]
+}
