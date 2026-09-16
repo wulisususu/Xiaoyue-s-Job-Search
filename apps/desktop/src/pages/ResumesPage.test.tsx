@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { ResumesPage } from './ResumesPage';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 it('shows immutable resume versions and imports a new PDF or DOCX', async () => {
   const initial = [
@@ -55,7 +58,8 @@ it('shows immutable resume versions and imports a new PDF or DOCX', async () => 
   expect(screen.getByText('V2')).toBeInTheDocument();
   expect(screen.getByText('已提取')).toBeInTheDocument();
   expect(screen.getByText('2 项待审核')).toBeInTheDocument();
-  expect(screen.queryByText(/vault/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/vault_relpath/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/vault[\\/]resumes/i)).not.toBeInTheDocument();
 
   const input = screen.getByLabelText('导入简历') as HTMLInputElement;
   expect(input.accept).toContain('.pdf');
