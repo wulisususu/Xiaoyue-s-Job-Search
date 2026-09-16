@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { getJobStats, getJobs } from './jobsClient';
+import { getJobStats, getJobs, getSourceStatus, runDueVerification, syncTencentSource, verifyJob } from './jobsClient';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,6 +19,23 @@ describe('jobsClient', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8765/api/jobs?ownership=central_soe&q=%E8%A7%86%E8%A7%89%E8%AE%BE%E8%AE%A1&location=%E5%8D%97%E4%BA%AC',
     );
+  });
+
+  it('loads source health and posts sync / verification actions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getSourceStatus();
+    await syncTencentSource();
+    await verifyJob('job-1');
+    await runDueVerification(20);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8765/api/sources/status');
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:8765/api/sources/tencent/sync', { method: 'POST' });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:8765/api/verification/jobs/job-1', { method: 'POST' });
+    expect(fetchMock).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:8765/api/verification/run-due?limit=20', { method: 'POST' });
   });
 
   it('loads job radar statistics', async () => {
