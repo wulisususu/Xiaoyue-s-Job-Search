@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_engine
-from app.models import Company, Job, JobSource
+from app.models import Company, Job, JobSource, UrlObservation
 
 
 def _seed_jobs() -> None:
@@ -24,6 +24,7 @@ def _seed_jobs() -> None:
             )
             session.add_all([job1, job2]); session.flush()
             session.add(JobSource(job_id=job1.id, source_name='xiaozhao-radar', source_record_key='src-1', source_url=job1.apply_url))
+            session.add(UrlObservation(job_id=job1.id, checked_url=job1.apply_url, final_url='https://app.mokahr.com/job/1', redirect_chain_json='[]', http_status=200, health='REDIRECTED', ats='moka', page_type='career_home', apply_evidence_json='[]'))
             session.commit()
     finally:
         engine.dispose()
@@ -40,6 +41,9 @@ def test_jobs_api_returns_company_and_provenance(client):
     assert first['company']['ownership'] == 'central_soe'
     assert first['sources'] == ['xiaozhao-radar']
     assert first['status'] == 'DISCOVERED_URL_UNVERIFIED'
+    assert first['verification_health'] == 'REDIRECTED'
+    assert first['ats'] == 'moka'
+    assert first['canonical_url'] == 'https://example.com/1'
 
 
 def test_jobs_api_filters_by_ownership_status_query_and_location(client):
@@ -67,6 +71,8 @@ def test_job_stats_reports_verification_state_and_ownership(client):
         'total': 2,
         'with_url_unverified': 1,
         'without_url': 1,
+        'verified_open': 0,
+        'rediscovery_required': 0,
         'central_soe': 1,
         'local_soe': 1,
         'unknown': 0,
