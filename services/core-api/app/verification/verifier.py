@@ -37,15 +37,36 @@ class VerificationResult:
 Transport = Callable[[str], HttpResponse]
 
 
+class _RedirectRecorder(urllib.request.HTTPRedirectHandler):
+    """HTTPRedirectHandler that records every hop and re-validates it.
+
+    Each redirect target is parsed, resolved against the previous URL and
+    passed through the SSRF guard BEFORE following it, so a redirect into
+    127.0.0.1 / 169.254.169.254 / file: etc. is refused instead of fetched.
+    """
+
+    def __init__(self, chain: list[str]) -> None:
+        self.chain = chain
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802 (urllib API)
+        self.chain.append(newurl)
+        validate_external_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _default_transport(url: str) -> HttpResponse:
     validate_external_url(url)
+    chain = [url]
+    recorder = _RedirectRecorder(chain)
+    opener = urllib.request.build_opener(recorder)
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 XiaoyueJobSearch/0.1"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with opener.open(request, timeout=20) as response:
             final_url = response.geturl()
             validate_external_url(final_url)
             body = response.read(2_000_000).decode(response.headers.get_content_charset() or "utf-8", "ignore")
-            chain = [url] if final_url == url else [url, final_url]
+            if final_url != chain[-1]:
+                chain.append(final_url)
             return HttpResponse(int(response.status), final_url, body, chain)
     except urllib.error.HTTPError as exc:
         final_url = exc.geturl() or url
@@ -54,7 +75,8 @@ def _default_transport(url: str) -> HttpResponse:
             body = exc.read(512_000).decode(exc.headers.get_content_charset() or "utf-8", "ignore")
         except Exception:
             pass
-        chain = [url] if final_url == url else [url, final_url]
+        if final_url != chain[-1]:
+            chain.append(final_url)
         return HttpResponse(int(exc.code), final_url, body, chain)
 
 
@@ -83,6 +105,10 @@ def verify_url(url: str, transport: Transport | None = None) -> VerificationResu
         health = "STALE"
     elif classification.page_type == "login":
         health = "LOGIN_REQUIRED"
+    elif classification.page_type == "spa_shell":
+        # JS-rendered page: static HTML carries no trustworthy evidence, so
+        # neither verify nor fail it — defer to the browser agent.
+        health = "REQUIRES_BROWSER"
     elif classification.page_type == "job_detail" and classification.apply_evidence:
         health = "VERIFIED_APPLY"
     elif response.final_url and response.final_url != url:

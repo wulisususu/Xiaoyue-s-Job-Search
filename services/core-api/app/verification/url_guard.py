@@ -25,12 +25,11 @@ def validate_external_url(url: str) -> None:
 
     for item in addresses:
         address = item[4][0]
-        ip = ipaddress.ip_address(address)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise ValueError("unparseable resolved address") from exc
+        if not ip.is_global:
+            # Covers loopback, RFC1918 private, link-local (incl. the
+            # 169.254.169.254 metadata endpoint), ULA, reserved, unspecified.
             raise ValueError("private or reserved address is not allowed")
