@@ -22,7 +22,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8"
+  "pytest>=8",
+  "pyinstaller>=6"
 ]
 
 [tool.setuptools.packages.find]
