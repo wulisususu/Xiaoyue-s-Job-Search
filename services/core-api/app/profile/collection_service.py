@@ -51,7 +51,7 @@ def _item_for_kind(session: Session, kind: str, item_id: int) -> ProfileCollecti
 def _append_revision(
     session: Session,
     *,
-    item_id: int | None,
+    item_id: int,
     kind: str,
     old_payload_json: str | None,
     new_payload_json: str | None,
@@ -298,9 +298,9 @@ def delete_collection_item(
             confidence=confidence,
             operation="DELETE",
         )
-        # Persist the DELETE revision while its FK still points at the item.
-        # Deleting the item then makes SQLite's ON DELETE SET NULL preserve
-        # the audit row without retaining a dangling identity.
+        # Revisions keep item_id as an immutable audit identifier rather than
+        # a live foreign key. Flushing before deleting makes the audit event
+        # explicit while preserving the same transaction boundary.
         session.flush()
         session.delete(item)
         session.flush()
