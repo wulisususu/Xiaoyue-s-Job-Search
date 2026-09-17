@@ -277,9 +277,9 @@ class ProfileCollectionItem(Base):
 class ProfileCollectionRevision(Base):
     __tablename__ = "profile_collection_revisions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    item_id: Mapped[int | None] = mapped_column(
-        ForeignKey("profile_collection_items.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+    # Historical audit identity: deliberately not a foreign key, so deleting
+    # the live SSOT item cannot rewrite old revisions to NULL.
+    item_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     old_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
