@@ -40,12 +40,10 @@ def upgrade() -> None:
     op.create_table(
         "profile_collection_revisions",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column(
-            "item_id",
-            sa.Integer(),
-            sa.ForeignKey("profile_collection_items.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
+        # Audit identity is intentionally NOT a foreign key. Revision rows are
+        # immutable history and must keep the original collection item id even
+        # after the current SSOT item is deleted.
+        sa.Column("item_id", sa.Integer(), nullable=False),
         sa.Column("kind", sa.String(length=40), nullable=False),
         sa.Column("old_payload_json", sa.Text(), nullable=True),
         sa.Column("new_payload_json", sa.Text(), nullable=True),
