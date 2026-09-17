@@ -9,7 +9,20 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import ProfileCollectionItem, ProfileDraftField, ProfileField, ProfileFieldRevision, ResumeVersion
+from ..models import (
+    ProfileCollectionDraft,
+    ProfileCollectionItem,
+    ProfileDraftField,
+    ProfileField,
+    ProfileFieldRevision,
+    ResumeVersion,
+)
+from ..profile.collection_drafts import (
+    ProfileCollectionDraftAlreadyReviewedError,
+    ProfileCollectionDraftNotFoundError,
+    accept_collection_draft,
+    reject_collection_draft,
+)
 from ..profile.collection_service import (
     DuplicateProfileCollectionValueError,
     ProfileCollectionItemNotFoundError,
@@ -126,6 +139,21 @@ class ProfileCollectionItemRead(BaseModel):
     updated_at: str
 
 
+class ProfileCollectionDraftRead(BaseModel):
+    id: int
+    resume_version_id: str
+    resume_version_number: int
+    resume_filename: str
+    kind: str
+    label: str
+    payload: dict[str, object]
+    confidence: float | None = None
+    extractor_name: str
+    status: str
+    created_at: str
+    reviewed_at: str | None = None
+
+
 class ProfileCollectionDeleteRead(BaseModel):
     deleted_id: int
 
@@ -221,6 +249,27 @@ def _collection_read(item: ProfileCollectionItem) -> ProfileCollectionItemRead:
     )
 
 
+def _collection_draft_read(session: Session, draft: ProfileCollectionDraft) -> ProfileCollectionDraftRead:
+    resume = session.get(ResumeVersion, draft.resume_version_id)
+    if resume is None:
+        raise HTTPException(status_code=500, detail="Profile collection draft references a missing resume version")
+    definition = get_collection_definition(draft.kind)
+    return ProfileCollectionDraftRead(
+        id=draft.id,
+        resume_version_id=draft.resume_version_id,
+        resume_version_number=resume.version_number,
+        resume_filename=resume.original_filename,
+        kind=draft.kind,
+        label=definition.label,
+        payload=json.loads(draft.payload_json),
+        confidence=draft.confidence,
+        extractor_name=draft.extractor_name,
+        status=draft.status,
+        created_at=draft.created_at.isoformat(),
+        reviewed_at=draft.reviewed_at.isoformat() if draft.reviewed_at else None,
+    )
+
+
 def _collection_validation_error(exc: KeyError | ValueError) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
@@ -307,6 +356,56 @@ def reject_draft(draft_id: int) -> ProfileDraftRead:
             except ProfileDraftNotFoundError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
             except ProfileDraftAlreadyReviewedError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        engine.dispose()
+
+
+@router.get("/collection-drafts", response_model=list[ProfileCollectionDraftRead])
+def list_profile_collection_drafts(
+    status: str | None = Query(default=None),
+) -> list[ProfileCollectionDraftRead]:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            query = select(ProfileCollectionDraft).order_by(ProfileCollectionDraft.id)
+            if status:
+                query = query.where(ProfileCollectionDraft.status == status)
+            drafts = session.scalars(query).all()
+            return [_collection_draft_read(session, draft) for draft in drafts]
+    finally:
+        engine.dispose()
+
+
+@router.post("/collection-drafts/{draft_id}/accept", response_model=ProfileCollectionItemRead)
+def accept_profile_collection_draft(draft_id: int) -> ProfileCollectionItemRead:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                item = accept_collection_draft(session, draft_id)
+                return _collection_read(item)
+            except ProfileCollectionDraftNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except (ProfileCollectionDraftAlreadyReviewedError, DuplicateProfileCollectionValueError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        engine.dispose()
+
+
+@router.post("/collection-drafts/{draft_id}/reject", response_model=ProfileCollectionDraftRead)
+def reject_profile_collection_draft(draft_id: int) -> ProfileCollectionDraftRead:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                draft = reject_collection_draft(session, draft_id)
+                return _collection_draft_read(session, draft)
+            except ProfileCollectionDraftNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ProfileCollectionDraftAlreadyReviewedError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
     finally:
         engine.dispose()
