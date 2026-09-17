@@ -45,14 +45,12 @@ fn pick_free_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
-/// Cheap local randomness: no crypto crate needed for a loopback-only,
-/// per-launch secret that dies with the process.
+/// OS CSPRNG (BCryptGenRandom on Windows): 256-bit per-launch secret,
+/// hex-encoded. The token dies with the process and is never persisted.
 fn generate_session_token() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{:x}{:x}{:x}", nanos, std::process::id(), nanos.rotate_left(32))
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).expect("OS CSPRNG unavailable");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Poll /api/health on the sidecar until it answers.
@@ -145,4 +143,21 @@ fn main() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_token_is_256_bit_hex() {
+        let token = generate_session_token();
+        assert_eq!(token.len(), 64, "256-bit => 64 hex chars");
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn session_token_differs_between_launches() {
+        assert_ne!(generate_session_token(), generate_session_token());
+    }
 }
