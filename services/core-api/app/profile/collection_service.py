@@ -107,6 +107,52 @@ def _ensure_unique_skill(
             raise DuplicateProfileCollectionValueError(f"Duplicate skill: {candidate}")
 
 
+def create_collection_item_uncommitted(
+    session: Session,
+    kind: str,
+    payload,
+    *,
+    source_type: str = "manual",
+    source_ref: str | None = None,
+    confidence: float | None = 1.0,
+    confirmed: bool = True,
+) -> ProfileCollectionItem:
+    """Create an item and its CREATE revision without committing.
+
+    Higher-level workflows such as AI-draft acceptance use this primitive so
+    their review-state transition and the SSOT write share one transaction.
+    Callers that own no surrounding transaction should use create_collection_item.
+    """
+    normalized = validate_collection_payload(kind, payload)
+    _ensure_unique_skill(session, kind=kind, payload=normalized)
+    existing = _items_for_kind(session, kind)
+    item = ProfileCollectionItem(
+        kind=kind,
+        position=len(existing),
+        payload_json=_dump(normalized),
+        source_type=source_type,
+        source_ref=source_ref,
+        confidence=confidence,
+        confirmed=confirmed,
+    )
+    session.add(item)
+    session.flush()
+    _append_revision(
+        session,
+        item_id=item.id,
+        kind=kind,
+        old_payload_json=None,
+        new_payload_json=item.payload_json,
+        old_position=None,
+        new_position=item.position,
+        source_type=source_type,
+        source_ref=source_ref,
+        confidence=confidence,
+        operation="CREATE",
+    )
+    return item
+
+
 def create_collection_item(
     session: Session,
     kind: str,
@@ -118,32 +164,14 @@ def create_collection_item(
     confirmed: bool = True,
 ) -> ProfileCollectionItem:
     try:
-        normalized = validate_collection_payload(kind, payload)
-        _ensure_unique_skill(session, kind=kind, payload=normalized)
-        existing = _items_for_kind(session, kind)
-        item = ProfileCollectionItem(
-            kind=kind,
-            position=len(existing),
-            payload_json=_dump(normalized),
+        item = create_collection_item_uncommitted(
+            session,
+            kind,
+            payload,
             source_type=source_type,
             source_ref=source_ref,
             confidence=confidence,
             confirmed=confirmed,
-        )
-        session.add(item)
-        session.flush()
-        _append_revision(
-            session,
-            item_id=item.id,
-            kind=kind,
-            old_payload_json=None,
-            new_payload_json=item.payload_json,
-            old_position=None,
-            new_position=item.position,
-            source_type=source_type,
-            source_ref=source_ref,
-            confidence=confidence,
-            operation="CREATE",
         )
         session.commit()
         session.refresh(item)
