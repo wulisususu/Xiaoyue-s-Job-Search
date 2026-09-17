@@ -101,6 +101,17 @@ def test_collection_crud_reorder_and_revisions_are_atomic(client):
                 "DELETE",
                 "REORDER",
             ]
+            # Revision history is the long-lived audit trail. Deleting the
+            # current SSOT row must not erase the stable identity from its
+            # historical CREATE / REORDER / DELETE events.
+            deleted_item_revisions = [
+                row for row in revisions if row.item_id == second_body["id"]
+            ]
+            assert [row.operation for row in deleted_item_revisions] == [
+                "CREATE",
+                "REORDER",
+                "DELETE",
+            ]
     finally:
         engine.dispose()
 
