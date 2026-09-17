@@ -28,7 +28,9 @@ it('loads resume metadata from the local core api', async () => {
   const result = await getResumes();
 
   expect(result).toEqual(payload);
-  expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8765/api/resumes');
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe('http://127.0.0.1:8765/api/resumes');
+  expect((init.headers as Headers).get('Authorization')).toBeNull();
 });
 
 it('uploads a selected resume with multipart form data', async () => {
@@ -61,4 +63,36 @@ it('uploads a selected resume with multipart form data', async () => {
   expect(init.method).toBe('POST');
   expect(init.body).toBeInstanceOf(FormData);
   expect((init.body as FormData).get('file')).toBe(file);
+});
+
+it('targets the injected runtime endpoint and sends the session token', async () => {
+  (window as unknown as Record<string, unknown>).__XIAOYUE_CORE__ = {
+    baseUrl: 'http://127.0.0.1:9777',
+    sessionToken: 'tok-123',
+  };
+  const fetchMock = vi.fn(() => Promise.resolve(new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await getResumes();
+
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe('http://127.0.0.1:9777/api/resumes');
+  expect((init.headers as Headers).get('Authorization')).toBe('Bearer tok-123');
+  delete (window as unknown as Record<string, unknown>).__XIAOYUE_CORE__;
+});
+
+it('imports against the injected endpoint with the authorization header', async () => {
+  (window as unknown as Record<string, unknown>).__XIAOYUE_CORE__ = {
+    baseUrl: 'http://127.0.0.1:9777',
+    sessionToken: 'tok-123',
+  };
+  const fetchMock = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+  vi.stubGlobal('fetch', fetchMock);
+
+  await importResume(new File(['x'], 'r.pdf', { type: 'application/pdf' }));
+
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe('http://127.0.0.1:9777/api/resumes/import');
+  expect((init.headers as Headers).get('Authorization')).toBe('Bearer tok-123');
+  delete (window as unknown as Record<string, unknown>).__XIAOYUE_CORE__;
 });

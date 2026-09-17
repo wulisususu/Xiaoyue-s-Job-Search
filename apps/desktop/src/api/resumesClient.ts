@@ -1,6 +1,4 @@
-import { CoreApiError } from './coreClient';
-
-const CORE_API_BASE = 'http://127.0.0.1:8765';
+import { CoreApiError, authHeaders, coreRuntime } from './coreClient';
 
 export interface ResumeVersion {
   id: string;
@@ -23,7 +21,11 @@ export interface ResumeImportResult extends ResumeVersion {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = init ? await fetch(url, init) : await fetch(url);
+  const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(authHeaders())) {
+    headers.set(key, value);
+  }
+  const response = init ? await fetch(url, { ...init, headers }) : await fetch(url, { headers });
   if (!response.ok) {
     let message = `Core API returned HTTP ${response.status}`;
     try {
@@ -37,14 +39,17 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** All core clients must resolve the endpoint through coreRuntime() so the
+ *  packaged app targets the sidecar's dynamic port, and must merge
+ *  authHeaders() so the session token guard lets them through. */
 export function getResumes(): Promise<ResumeVersion[]> {
-  return requestJson<ResumeVersion[]>(`${CORE_API_BASE}/api/resumes`);
+  return requestJson<ResumeVersion[]>(`${coreRuntime().baseUrl}/api/resumes`);
 }
 
 export function importResume(file: File): Promise<ResumeImportResult> {
   const body = new FormData();
   body.append('file', file);
-  return requestJson<ResumeImportResult>(`${CORE_API_BASE}/api/resumes/import`, {
+  return requestJson<ResumeImportResult>(`${coreRuntime().baseUrl}/api/resumes/import`, {
     method: 'POST',
     body,
   });
