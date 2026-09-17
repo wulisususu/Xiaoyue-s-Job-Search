@@ -3,7 +3,7 @@
 The startup path is empty DB -> alembic upgrade head. These tests verify:
 - a fresh database built ONLY by migrations matches the ORM models
   (drift guard in both directions)
-- a database from the first revision upgrades cleanly to head
+- historical databases upgrade cleanly to head
 - the SQLite pragmas and FK cascades really apply
 """
 
@@ -33,6 +33,7 @@ def test_fresh_db_is_built_by_migration_chain_and_is_idempotent(tmp_path):
             "source_sync_runs", "url_observations", "rediscovery_candidates",
             "ai_provider_configs", "resume_versions", "profile_fields",
             "profile_field_revisions", "profile_draft_fields",
+            "profile_collection_items", "profile_collection_revisions",
             "application_sessions", "url_candidates", "alembic_version",
         ):
             assert expected in tables, f"missing table {expected}"
@@ -82,7 +83,6 @@ def test_first_revision_db_upgrades_to_head(tmp_path):
     settings = _settings(tmp_path)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build a genuine historical database: only the first revision.
     command.upgrade(_alembic_config(settings), "0001_initial_schema")
 
     db_file = settings.database_path
@@ -100,9 +100,40 @@ def test_first_revision_db_upgrades_to_head(tmp_path):
     engine = get_engine(settings)
     try:
         job_source_columns = {c["name"] for c in inspect(engine).get_columns("job_sources")}
+        tables = set(inspect(engine).get_table_names())
         assert {"record_hash", "status"} <= job_source_columns
-        assert "application_sessions" in set(inspect(engine).get_table_names())
-        assert "url_candidates" in set(inspect(engine).get_table_names())
+        assert "application_sessions" in tables
+        assert "url_candidates" in tables
+        assert "profile_collection_items" in tables
+        assert "profile_collection_revisions" in tables
+    finally:
+        engine.dispose()
+
+
+def test_pre_collection_db_upgrades_to_structured_profile_head(tmp_path):
+    """A real 0006 database must gain collection tables without rewriting
+    the existing scalar Profile SSOT."""
+    settings = _settings(tmp_path)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    command.upgrade(_alembic_config(settings), "0006_job_next_verification_at")
+
+    engine = create_engine(f"sqlite:///{settings.database_path}")
+    try:
+        before = set(inspect(engine).get_table_names())
+        assert "profile_fields" in before
+        assert "profile_collection_items" not in before
+        assert "profile_collection_revisions" not in before
+    finally:
+        engine.dispose()
+
+    init_db(settings)
+
+    engine = get_engine(settings)
+    try:
+        after = set(inspect(engine).get_table_names())
+        assert "profile_fields" in after
+        assert "profile_collection_items" in after
+        assert "profile_collection_revisions" in after
     finally:
         engine.dispose()
 
