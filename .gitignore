@@ -12,6 +12,7 @@ __pycache__/
 *.sqlite
 *.sqlite3
 apps/desktop/src-tauri/target/
+services/core-api/build/
 .worktrees/
 local-data/
 coverage/
