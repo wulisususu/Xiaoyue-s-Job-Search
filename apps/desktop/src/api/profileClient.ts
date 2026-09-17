@@ -1,6 +1,6 @@
-import { CoreApiError } from './coreClient';
+import { CoreApiError, authHeaders, coreRuntime } from './coreClient';
 
-const CORE_API_BASE = 'http://127.0.0.1:8765';
+const CORE_API_BASE = () => coreRuntime().baseUrl;
 
 export interface ProfileDefinition {
   field_key: string;
@@ -41,8 +41,45 @@ export interface ProfileDraft {
   reviewed_at: string | null;
 }
 
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = init ? await fetch(url, init) : await fetch(url);
+export interface ProfileCollectionFieldDefinition {
+  key: string;
+  label: string;
+  value_type: string;
+  required: boolean;
+  multiple: boolean;
+}
+
+export interface ProfileCollectionDefinition {
+  kind: string;
+  label: string;
+  fields: ProfileCollectionFieldDefinition[];
+}
+
+export interface ProfileCollectionItem {
+  id: number;
+  kind: string;
+  position: number;
+  payload: Record<string, unknown>;
+  source_type: string;
+  source_ref: string | null;
+  confidence: number | null;
+  confirmed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const url = `${CORE_API_BASE()}${path}`;
+  const auth = authHeaders();
+  const authEntries = Object.entries(auth);
+  let requestInit = init;
+  if (authEntries.length > 0) {
+    const headers = new Headers(init?.headers);
+    for (const [key, value] of authEntries) headers.set(key, value);
+    requestInit = { ...init, headers };
+  }
+
+  const response = requestInit ? await fetch(url, requestInit) : await fetch(url);
   if (!response.ok) {
     let message = `Core API returned HTTP ${response.status}`;
     try {
@@ -57,33 +94,78 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function getProfileDefinitions(): Promise<ProfileDefinition[]> {
-  return requestJson<ProfileDefinition[]>(`${CORE_API_BASE}/api/profile/definitions`);
+  return requestJson<ProfileDefinition[]>('/api/profile/definitions');
 }
 
 export function getProfileFields(): Promise<ProfileField[]> {
-  return requestJson<ProfileField[]>(`${CORE_API_BASE}/api/profile/fields`);
+  return requestJson<ProfileField[]>('/api/profile/fields');
 }
 
 export function getPendingProfileDrafts(): Promise<ProfileDraft[]> {
-  return requestJson<ProfileDraft[]>(`${CORE_API_BASE}/api/profile/drafts?status=PENDING`);
+  return requestJson<ProfileDraft[]>('/api/profile/drafts?status=PENDING');
 }
 
 export function acceptProfileDraft(draftId: number): Promise<ProfileField> {
-  return requestJson<ProfileField>(`${CORE_API_BASE}/api/profile/drafts/${draftId}/accept`, {
+  return requestJson<ProfileField>(`/api/profile/drafts/${draftId}/accept`, {
     method: 'POST',
   });
 }
 
 export function rejectProfileDraft(draftId: number): Promise<ProfileDraft> {
-  return requestJson<ProfileDraft>(`${CORE_API_BASE}/api/profile/drafts/${draftId}/reject`, {
+  return requestJson<ProfileDraft>(`/api/profile/drafts/${draftId}/reject`, {
     method: 'POST',
   });
 }
 
 export function saveProfileField(fieldKey: string, value: unknown): Promise<ProfileField> {
-  return requestJson<ProfileField>(`${CORE_API_BASE}/api/profile/fields/${encodeURIComponent(fieldKey)}`, {
+  return requestJson<ProfileField>(`/api/profile/fields/${encodeURIComponent(fieldKey)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ value }),
+  });
+}
+
+export function getProfileCollectionDefinitions(): Promise<ProfileCollectionDefinition[]> {
+  return requestJson<ProfileCollectionDefinition[]>('/api/profile/collections/definitions');
+}
+
+export function getProfileCollection(kind: string): Promise<ProfileCollectionItem[]> {
+  return requestJson<ProfileCollectionItem[]>(`/api/profile/collections/${encodeURIComponent(kind)}`);
+}
+
+export function createProfileCollectionItem(
+  kind: string,
+  payload: Record<string, unknown>,
+): Promise<ProfileCollectionItem> {
+  return requestJson<ProfileCollectionItem>(`/api/profile/collections/${encodeURIComponent(kind)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ payload }),
+  });
+}
+
+export function updateProfileCollectionItem(
+  kind: string,
+  itemId: number,
+  payload: Record<string, unknown>,
+): Promise<ProfileCollectionItem> {
+  return requestJson<ProfileCollectionItem>(`/api/profile/collections/${encodeURIComponent(kind)}/${itemId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ payload }),
+  });
+}
+
+export function deleteProfileCollectionItem(kind: string, itemId: number): Promise<{ deleted_id: number }> {
+  return requestJson<{ deleted_id: number }>(`/api/profile/collections/${encodeURIComponent(kind)}/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function reorderProfileCollectionItems(kind: string, itemIds: number[]): Promise<ProfileCollectionItem[]> {
+  return requestJson<ProfileCollectionItem[]>(`/api/profile/collections/${encodeURIComponent(kind)}/order`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_ids: itemIds }),
   });
 }
