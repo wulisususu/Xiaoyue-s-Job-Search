@@ -14,7 +14,7 @@ describe('tauri.conf.json (packaging contract)', () => {
     expect(conf.bundle.active).toBe(true);
     expect(conf.bundle.targets).toContain('nsis');
     const resources = Array.isArray(conf.bundle.resources) ? {} : conf.bundle.resources;
-    expect(resources['../../services/core-api/dist/xiaoyue-core-api']).toBe('core-api/');
+    expect(resources['../../../services/core-api/dist/xiaoyue-core-api']).toBe('core-api/');
   });
 
   it('allows the webview to reach any loopback port (dynamic sidecar port)', () => {

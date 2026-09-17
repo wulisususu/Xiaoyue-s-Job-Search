@@ -21,7 +21,7 @@
     "active": true,
     "targets": ["nsis"],
     "resources": {
-      "../../services/core-api/dist/xiaoyue-core-api": "core-api/"
+      "../../../services/core-api/dist/xiaoyue-core-api": "core-api/"
     }
   }
 }
