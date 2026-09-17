@@ -92,3 +92,5 @@ jobs:
         run: npm run build --workspace apps/desktop
       - name: Validate Tauri Cargo metadata
         run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --no-deps
+      - name: Cargo check (Rust shell compiles)
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml

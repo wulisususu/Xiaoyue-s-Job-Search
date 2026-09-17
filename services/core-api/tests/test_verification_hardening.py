@@ -11,11 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models import Base, Company, Job
 
-
-@pytest.fixture(autouse=True)
-def _no_dns(monkeypatch):
-    """Example.com hosts do not resolve in CI; bypass the guard for fake transports."""
-    monkeypatch.setattr('app.verification.verifier.validate_external_url', lambda url: None)
+# DNS bypass for fake transports is provided globally by conftest; the
+# guard-rejection test below calls the real validate_external_url directly.
 
 
 def test_spa_shell_is_flagged_requires_browser_not_verified():

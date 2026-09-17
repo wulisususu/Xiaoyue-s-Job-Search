@@ -1,6 +1,6 @@
-import { CoreApiError } from './coreClient';
+import { CoreApiError, authHeaders, coreRuntime } from './coreClient';
 
-const CORE_API_BASE = 'http://127.0.0.1:8765';
+const CORE_API_BASE = () => coreRuntime().baseUrl;
 
 export interface JobCompany {
   id: number;
@@ -94,7 +94,11 @@ export interface VerificationBatchResult {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = init ? await fetch(url, init) : await fetch(url);
+  const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(authHeaders())) {
+    headers.set(key, value);
+  }
+  const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
     throw new CoreApiError(response.status, `Core API returned HTTP ${response.status}`);
   }
@@ -111,33 +115,33 @@ export function getJobs(filters: JobFilters = {}): Promise<JobListResponse> {
     }
   }
   const query = params.toString();
-  return requestJson<JobListResponse>(`${CORE_API_BASE}/api/jobs${query ? `?${query}` : ''}`);
+  return requestJson<JobListResponse>(`${CORE_API_BASE()}/api/jobs${query ? `?${query}` : ''}`);
 }
 
 export function getJobStats(): Promise<JobStats> {
-  return requestJson<JobStats>(`${CORE_API_BASE}/api/jobs/stats`);
+  return requestJson<JobStats>(`${CORE_API_BASE()}/api/jobs/stats`);
 }
 
 export function getSourceStatus(): Promise<SourceStatus[]> {
-  return requestJson<SourceStatus[]>(`${CORE_API_BASE}/api/sources/status`);
+  return requestJson<SourceStatus[]>(`${CORE_API_BASE()}/api/sources/status`);
 }
 
 export function syncTencentSource(): Promise<SourceSyncResult> {
-  return requestJson<SourceSyncResult>(`${CORE_API_BASE}/api/sources/tencent/sync`, { method: 'POST' });
+  return requestJson<SourceSyncResult>(`${CORE_API_BASE()}/api/sources/tencent/sync`, { method: 'POST' });
 }
 
 export function syncWorkfindSource(): Promise<SourceSyncResult> {
-  return requestJson<SourceSyncResult>(`${CORE_API_BASE}/api/sources/workfind/sync`, { method: 'POST' });
+  return requestJson<SourceSyncResult>(`${CORE_API_BASE()}/api/sources/workfind/sync`, { method: 'POST' });
 }
 
 export function syncDueSources(): Promise<SourceSyncResult[]> {
-  return requestJson<SourceSyncResult[]>(`${CORE_API_BASE}/api/sources/sync-due`, { method: 'POST' });
+  return requestJson<SourceSyncResult[]>(`${CORE_API_BASE()}/api/sources/sync-due`, { method: 'POST' });
 }
 
 export function verifyJob(jobId: string): Promise<JobVerificationResult> {
-  return requestJson<JobVerificationResult>(`${CORE_API_BASE}/api/verification/jobs/${encodeURIComponent(jobId)}`, { method: 'POST' });
+  return requestJson<JobVerificationResult>(`${CORE_API_BASE()}/api/verification/jobs/${encodeURIComponent(jobId)}`, { method: 'POST' });
 }
 
 export function runDueVerification(limit = 50): Promise<VerificationBatchResult> {
-  return requestJson<VerificationBatchResult>(`${CORE_API_BASE}/api/verification/run-due?limit=${limit}`, { method: 'POST' });
+  return requestJson<VerificationBatchResult>(`${CORE_API_BASE()}/api/verification/run-due?limit=${limit}`, { method: 'POST' });
 }

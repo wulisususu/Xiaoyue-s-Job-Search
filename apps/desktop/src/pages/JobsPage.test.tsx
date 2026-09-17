@@ -68,5 +68,11 @@ it('renders imported jobs and keeps unverified applications gated', async () => 
   expect(prev).toBeDisabled();
   expect(next).toBeEnabled();
   expect(screen.getByText(/第 1–50 条，共 120 条/)).toBeInTheDocument();
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8765/api/sources/sync-due', { method: 'POST' }));
+  await waitFor(() => {
+    const syncCall = (fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call) => String(call[0]) === 'http://127.0.0.1:8765/api/sources/sync-due',
+    );
+    expect(syncCall).toBeDefined();
+    expect((syncCall![1] as RequestInit | undefined)?.method).toBe('POST');
+  });
 });

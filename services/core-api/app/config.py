@@ -10,6 +10,10 @@ class AppSettings(BaseSettings):
     app_name: str = "Xiaoyue Job Search"
     host: str = "127.0.0.1"
     port: int = 8765
+    # Set by the Tauri shell per launch (XIAOYUE_SESSION_TOKEN): when present,
+    # every /api/* request must carry `Authorization: Bearer <token>`. The
+    # health endpoint stays open so the sidecar readiness probe works.
+    session_token: str | None = None
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".xiaoyue-job-search")
 
     @property

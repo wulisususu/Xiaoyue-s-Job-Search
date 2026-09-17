@@ -1,5 +1,8 @@
+import hmac
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -32,8 +35,24 @@ def create_app() -> FastAPI:
         allow_origins=["http://localhost:1420", "tauri://localhost"],
         allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=["*", "Authorization"],
     )
+
+    if settings.session_token:
+        # Trust boundary for the desktop app: only the shell that launched
+        # this sidecar knows the per-launch token, so other local processes
+        # (or web pages probing localhost) cannot drive the API.
+        expected = f"Bearer {settings.session_token}"
+
+        @application.middleware("http")
+        async def _require_session_token(request, call_next):
+            path = request.url.path
+            if path.startswith("/api/") and path != "/api/health":
+                provided = request.headers.get("authorization", "")
+                if not hmac.compare_digest(provided, expected):
+                    return JSONResponse(status_code=401, content={"detail": "invalid session token"})
+            return await call_next(request)
+
     application.include_router(ai_router)
     application.include_router(health_router)
     application.include_router(jobs_router)
