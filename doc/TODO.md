@@ -44,39 +44,9 @@
 
 ---
 
-### 2. 本机 API session token 安全加固
-
-**Status**：IN PROGRESS  
-**Priority**：P0  
-**Depends on**：Tauri sidecar  
-**Blocks**：Browser Agent 高权限控制接口
-
-**已完成**：
-
-- [x] 每次启动生成 session token 并传给 Core。
-- [x] Core 对 `/api/*`（health 除外）校验 `Authorization: Bearer ...`。
-- [x] Core 已增加 loopback Host / Origin 校验基础。
-- [x] 前端已有动态 endpoint/token 注入机制。
-
-**仍需完成**：
-
-- [ ] 把当前时间戳 + PID 派生 token 改为 OS CSPRNG，至少 256-bit。
-- [ ] 明确 token 只存内存，不落 SQLite / log。
-- [ ] 增加 session auth E2E：无 token / 错 token / 正确 token。
-- [ ] 审查所有 Core clients，统一经过 authenticated fetch/runtime wrapper。
-- [ ] Browser Agent 高权限 route 禁止绕过 auth middleware。
-- [ ] 明确“本地 AI Provider 访问 localhost”与“招聘 URL verifier SSRF guard”是两套安全策略。
-
-**Acceptance**：
-
-- 任意其他本地进程在不知道 token 时无法调用敏感 API。
-- token 每次启动变化且不可预测。
-
----
-
 ## P1：产品主链继续补齐
 
-### 3. Dashboard 接真实数据
+### 2. Dashboard 接真实数据
 
 **Status**：TODO  
 **Priority**：P1
@@ -92,7 +62,7 @@
 
 ---
 
-### 4. Application CRM Phase 2
+### 3. Application CRM Phase 2
 
 **Status**：IN PROGRESS  
 **Priority**：P1
@@ -118,7 +88,7 @@
 
 ---
 
-### 5. 设置页
+### 4. 设置页
 
 **Status**：TODO  
 **Priority**：P1
@@ -134,7 +104,7 @@
 
 ## P1：仍需解决的业务一致性问题
 
-### 6. Canonical Job 字段清空语义
+### 5. Canonical Job 字段清空语义
 
 **Status**：TODO  
 **Priority**：P1
@@ -149,7 +119,7 @@
 
 ## P2：工程化与发布质量
 
-### 7. CI / Release pipeline 补齐
+### 6. CI / Release pipeline 补齐
 
 **Status**：IN PROGRESS  
 **Priority**：P2
@@ -175,7 +145,7 @@
 
 ---
 
-### 8. OpenAPI 前后端契约生成
+### 7. OpenAPI 前后端契约生成
 
 **Status**：TODO  
 **Priority**：P2
@@ -187,7 +157,7 @@
 
 ---
 
-### 9. Snapshot / Vault retention policy
+### 8. Snapshot / Vault retention policy
 
 **Status**：TODO  
 **Priority**：P2
@@ -200,7 +170,7 @@
 
 ---
 
-### 10. README / 运行时文档同步
+### 9. README / 运行时文档同步
 
 **Status**：IN PROGRESS  
 **Priority**：P2
@@ -219,7 +189,7 @@
 - [x] Profile Structured Collections 已落地。
 - [x] AI Provider / Extraction Contract 已冻结并完成 run audit / idempotency。
 - [x] Application CRM SSOT 已确定。
-- [ ] session token 使用 CSPRNG 并完成 auth tests。
+- [x] session token 使用 CSPRNG 并完成 auth tests。
 - [x] DNS rebinding / TOCTOU 已通过 pinned-IP 方案关闭。
 - [ ] Browser Agent 只读 confirmed Profile SSOT，不直接读取未经确认的 Draft。
 - [ ] 每次最终提交前都有人类确认 gate。
@@ -230,15 +200,13 @@
 ## 建议执行顺序
 
 ```text
-① CSPRNG session token + auth E2E
+① Tauri sidecar 打包 / installer 闭环
    ↓
-② Tauri sidecar 打包 / installer 闭环
+② Application CRM Phase 2 + Dashboard + Settings
    ↓
-③ Application CRM Phase 2 + Dashboard + Settings
+③ Browser Agent（confirmed Profile SSOT + human-confirm gate）
    ↓
-④ Browser Agent（confirmed Profile SSOT + human-confirm gate）
-   ↓
-⑤ Release hardening / E2E / installer smoke / dependency audit
+④ Release hardening / E2E / installer smoke / dependency audit
 ```
 
 ---
@@ -247,6 +215,10 @@
 
 以下事项已经在当前功能基线落地，并经过 CI 或对应回归测试验证：
 
+- [x] Session token 硬化：OS CSPRNG 生成 256-bit token（Windows BCryptGenRandom），只存两侧进程内存与 Authorization 头，绝不落 SQLite/log（含 token-不落库回归断言）。
+- [x] Session auth E2E：无 token / 错 token → 401、正确 token → 200、health 豁免、foreign origin 拒绝、逐路由防绕过断言（未来 Browser Agent 高权限 router 天然被 middleware 覆盖）。
+- [x] Core clients 审计：全部 client 统一经 `coreRuntime()` 动态端点 + `authHeaders()` wrapper，修复 resumesClient 硬编码端点且不带 token 的缺口。
+- [x] CI 增加 `cargo test`（Rust 层 token 单测起）。
 - [x] 统一 AI Provider / Extraction Contract：唯一 `ProfileExtractionProvider` 契约（`metadata()` + `extract() → ProfileExtractionBundle`）；`ProfileExtractor/provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨实现已删除。
 - [x] `AIExtractionRun` 持久化（`0009_ai_extraction_runs` migration）：provider / model / prompt_version / schema_version / status / input_hash / error；provider 失败也落 FAILED run 而不是静默丢弃。
 - [x] scalar / collection Draft 均关联 `extraction_run_id` + `candidate_fingerprint`，同一 run 重放不产生重复候选（partial unique index 硬约束）。
