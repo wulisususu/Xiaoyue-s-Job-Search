@@ -28,6 +28,9 @@ it('reviews resume drafts explicitly and keeps confirmed profile as the SSOT', a
     if (url.endsWith('/api/profile/collections/definitions')) {
       return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
+    if (url.endsWith('/api/profile/collection-drafts?status=PENDING')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.endsWith('/api/profile/definitions')) {
       return Promise.resolve(new Response(JSON.stringify(definitions), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
@@ -84,6 +87,9 @@ it('renders every server-defined profile field even before it has a confirmed va
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/api/profile/collections/definitions')) {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.endsWith('/api/profile/collection-drafts?status=PENDING')) {
         return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
       }
       if (url.endsWith('/api/profile/definitions')) {
@@ -158,6 +164,9 @@ it('edits repeatable education records independently and preserves server order'
     if (url.endsWith('/api/profile/collections/definitions')) {
       return Promise.resolve(new Response(JSON.stringify(collectionDefinitions), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
+    if (url.endsWith('/api/profile/collection-drafts?status=PENDING')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.endsWith('/api/profile/collections/education/order') && method === 'PUT') {
       return Promise.resolve(new Response(JSON.stringify([
         { ...third, position: 0 },
@@ -215,4 +224,90 @@ it('edits repeatable education records independently and preserves server order'
     'http://127.0.0.1:8765/api/profile/collections/education/order',
     expect.objectContaining({ method: 'PUT', body: JSON.stringify({ item_ids: [3, 1] }) }),
   );
+});
+
+it('reviews structured collection drafts and only exposes accepted records to the SSOT editor', async () => {
+  const collectionDefinitions = [
+    {
+      kind: 'education',
+      label: '教育经历',
+      fields: [
+        { key: 'school', label: '学校', value_type: 'string', required: true, multiple: false },
+        { key: 'major', label: '专业', value_type: 'string', required: false, multiple: false },
+      ],
+    },
+  ];
+  const firstDraft = {
+    id: 21,
+    resume_version_id: 'resume-1',
+    resume_version_number: 2,
+    resume_filename: '基础简历.pdf',
+    kind: 'education',
+    label: '教育经历',
+    payload: { school: '三江学院', major: '视觉传达设计' },
+    confidence: 0.96,
+    extractor_name: 'openai-compatible-v1',
+    status: 'PENDING',
+    created_at: '2026-09-17T10:00:00',
+    reviewed_at: null,
+  };
+  const secondDraft = {
+    ...firstDraft,
+    id: 22,
+    payload: { school: '第二候选学校' },
+    confidence: 0.82,
+  };
+  const acceptedItem = {
+    id: 7,
+    kind: 'education',
+    position: 0,
+    payload: firstDraft.payload,
+    source_type: 'resume',
+    source_ref: 'resume-1',
+    confidence: 0.96,
+    confirmed: true,
+    created_at: '2026-09-17T10:01:00',
+    updated_at: '2026-09-17T10:01:00',
+  };
+  let accepted = false;
+
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/api/profile/collections/definitions')) {
+      return Promise.resolve(new Response(JSON.stringify(collectionDefinitions), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collection-drafts?status=PENDING')) {
+      return Promise.resolve(new Response(JSON.stringify([firstDraft, secondDraft]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collection-drafts/21/accept')) {
+      accepted = true;
+      return Promise.resolve(new Response(JSON.stringify(acceptedItem), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collection-drafts/22/reject')) {
+      return Promise.resolve(new Response(JSON.stringify({ ...secondDraft, status: 'REJECTED', reviewed_at: '2026-09-17T10:02:00' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education')) {
+      return Promise.resolve(new Response(JSON.stringify(accepted ? [acceptedItem] : []), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/definitions') || url.endsWith('/api/profile/fields') || url.endsWith('/api/profile/drafts?status=PENDING')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return Promise.resolve(new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<ProfilePage />);
+
+  await waitFor(() => expect(screen.getByRole('button', { name: '接受 教育经历候选 1' })).toBeInTheDocument());
+  expect(screen.getByText('三江学院')).toBeInTheDocument();
+  expect(screen.getByText('视觉传达设计')).toBeInTheDocument();
+  expect(screen.getByText('第二候选学校')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: '接受 教育经历候选 1' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: '接受 教育经历候选 1' })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.getByDisplayValue('三江学院')).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole('button', { name: '拒绝 教育经历候选 2' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: '拒绝 教育经历候选 2' })).not.toBeInTheDocument());
+  expect(screen.queryByText('第二候选学校')).not.toBeInTheDocument();
 });
