@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import ProfileDraftField, ProfileField, ProfileFieldRevision, ResumeVersion, utcnow
-from .extraction import extract_deterministic
+from .extraction import DeterministicExtractionProvider
+from .extraction_runs import execute_extraction_run
 from .registry import get_field_definition, validate_profile_value
 
 
@@ -73,26 +74,19 @@ def _upsert_confirmed_field(
 
 
 def create_resume_drafts(session: Session, resume_version: ResumeVersion) -> list[ProfileDraftField]:
+    """Deterministic import extraction, now running through the one formal
+    chain: an AIExtractionRun row records provenance, drafts link to it."""
     if resume_version.extraction_status != "EXTRACTED" or not resume_version.extracted_text:
         return []
 
-    drafts: list[ProfileDraftField] = []
-    for candidate in extract_deterministic(resume_version.extracted_text):
-        draft = ProfileDraftField(
-            resume_version_id=resume_version.id,
-            field_key=candidate.field_key,
-            value_json=_dump(candidate.value),
-            value_type=candidate.value_type,
-            confidence=candidate.confidence,
-            extractor_name=candidate.extractor_name,
-            status="PENDING",
+    run = execute_extraction_run(session, resume_version, DeterministicExtractionProvider())
+    return list(
+        session.scalars(
+            select(ProfileDraftField)
+            .where(ProfileDraftField.extraction_run_id == run.id)
+            .order_by(ProfileDraftField.id)
         )
-        session.add(draft)
-        drafts.append(draft)
-    session.commit()
-    for draft in drafts:
-        session.refresh(draft)
-    return drafts
+    )
 
 
 def manual_upsert_profile_field(session: Session, field_key: str, value) -> ProfileField:

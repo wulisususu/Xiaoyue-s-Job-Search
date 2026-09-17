@@ -2,21 +2,22 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from ..models import ProfileCollectionDraft, ProfileCollectionItem, ResumeVersion, utcnow
 from .collection_service import create_collection_item_uncommitted
 from .collections import validate_collection_payload
+from .extraction import CollectionDraftCandidate
 
-
-@dataclass(frozen=True, slots=True)
-class CollectionDraftCandidate:
-    kind: str
-    payload: dict[str, object]
-    confidence: float | None
-    extractor_name: str
+__all__ = [
+    "CollectionDraftCandidate",
+    "ProfileCollectionDraftAlreadyReviewedError",
+    "ProfileCollectionDraftNotFoundError",
+    "accept_collection_draft",
+    "create_collection_drafts",
+    "reject_collection_draft",
+]
 
 
 class ProfileCollectionDraftNotFoundError(LookupError):
@@ -31,7 +32,7 @@ def _dump(value: dict[str, object]) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _validate_confidence(value: float | None) -> float | None:
+def validate_collection_confidence(value: float | None) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -62,7 +63,7 @@ def create_collection_drafts(
         prepared: list[tuple[CollectionDraftCandidate, dict[str, object], float | None, str]] = []
         for candidate in candidates:
             normalized_payload = validate_collection_payload(candidate.kind, candidate.payload)
-            confidence = _validate_confidence(candidate.confidence)
+            confidence = validate_collection_confidence(candidate.confidence)
             extractor_name = candidate.extractor_name.strip()
             if not extractor_name:
                 raise ValueError("collection draft extractor_name is required")

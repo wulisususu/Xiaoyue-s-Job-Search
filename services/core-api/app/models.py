@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -213,6 +213,30 @@ class AIProviderConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
+class AIExtractionRun(Base):
+    """One execution of the unified ProfileExtractionProvider contract.
+
+    The mandatory audit link between a resume version and every draft a
+    provider produced: provider, model, prompt/schema versions, status and
+    errors are recorded whether the run succeeds or fails.
+    """
+
+    __tablename__ = "ai_extraction_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    resume_version_id: Mapped[str] = mapped_column(
+        ForeignKey("resume_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    model: Mapped[str] = mapped_column(String(240), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING", index=True)
+    input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
 class ResumeVersion(Base):
     __tablename__ = "resume_versions"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -296,14 +320,35 @@ class ProfileDraftField(Base):
     __tablename__ = "profile_draft_fields"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     resume_version_id: Mapped[str] = mapped_column(ForeignKey("resume_versions.id", ondelete="CASCADE"), nullable=False, index=True)
+    extraction_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "ai_extraction_runs.id",
+            ondelete="SET NULL",
+            name="fk_profile_draft_fields_extraction_run_id",
+        ),
+        nullable=True,
+        index=True,
+    )
     field_key: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
     value_json: Mapped[str] = mapped_column(Text, nullable=False)
     value_type: Mapped[str] = mapped_column(String(40), nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     extractor_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    candidate_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Replay safety: the same extraction run cannot insert the same candidate
+    # twice. Legacy rows (pre-0009) keep NULL linkage and stay untouched.
+    __table_args__ = (
+        Index(
+            "uq_profile_draft_fields_run_fingerprint",
+            "extraction_run_id",
+            "candidate_fingerprint",
+            unique=True,
+            sqlite_where=text("extraction_run_id IS NOT NULL AND candidate_fingerprint IS NOT NULL"),
+        ),
+    )
 
 
 class ProfileCollectionDraft(Base):
@@ -312,10 +357,29 @@ class ProfileCollectionDraft(Base):
     resume_version_id: Mapped[str] = mapped_column(
         ForeignKey("resume_versions.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    extraction_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "ai_extraction_runs.id",
+            ondelete="SET NULL",
+            name="fk_profile_collection_drafts_extraction_run_id",
+        ),
+        nullable=True,
+        index=True,
+    )
     kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     extractor_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    candidate_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    __table_args__ = (
+        Index(
+            "uq_profile_collection_drafts_run_fingerprint",
+            "extraction_run_id",
+            "candidate_fingerprint",
+            unique=True,
+            sqlite_where=text("extraction_run_id IS NOT NULL AND candidate_fingerprint IS NOT NULL"),
+        ),
+    )

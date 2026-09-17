@@ -8,44 +8,7 @@
 
 ## P0：Browser Agent 前必须完成的架构基础
 
-### 1. 统一 AI Provider / Extraction Contract
-
-**Status**：IN PROGRESS  
-**Priority**：P0  
-**Depends on**：Profile Structured Collections 已完成  
-**Blocks**：AI Resume Extraction、OCR 后处理、Browser Agent AI 辅助
-
-**已完成基础**：
-
-- [x] OpenAI-compatible extraction response 已可表达 `scalar fields + structured collections`。
-- [x] Structured Collection 候选有独立 Draft 表、状态、confidence、extractor metadata。
-- [x] Collection Draft 支持逐项 accept / reject。
-- [x] accept 使用单事务完成：正式 SSOT item + CREATE revision + Draft → ACCEPTED。
-- [x] Desktop ProfilePage 已能审核结构化候选；接受后刷新对应 collection。
-- [x] 旧 scalar Profile SSOT 保留，迁移不丢数据。
-
-**仍需完成**：
-
-- [ ] 冻结唯一 `ProfileExtractionProvider` Contract。
-- [ ] 合并 / 淘汰 `ProfileExtractor + provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨，业务层只能依赖一个接口。
-- [ ] 新增 `AIExtractionRun` 持久化：provider / model / prompt version / schema version / resume version / created_at / status / error。
-- [ ] Draft 幂等：同一 extraction run 重放不能重复插入相同 scalar / collection 候选。
-- [ ] 串成唯一正式链路：`Resume → AIExtractionRun → Draft → Review → SSOT`。
-- [ ] AI 输出永远先进入 Draft；任何异常模型输出不得直接写 Profile SSOT。
-- [ ] 配置最大输入长度、最大输出长度、timeout、JSON schema validation、错误降级策略。
-- [ ] 旧 `experience.summary / awards.summary / skills.summary` 如需结构化，走“AI 生成 Draft → 人工确认”，禁止无审核自动拆分覆盖。
-- [ ] 为 provider 切换、坏 JSON、超时、重复 run、部分 collection 非法 payload 增加回归测试。
-
-**Acceptance**：
-
-- AI 层只有一个正式 Provider Contract。
-- 不同 OpenAI-compatible endpoint 切换时，业务层无需修改。
-- 同一 Resume / extraction run 可审计、可重放且不产生重复 Draft。
-- 未经人工确认的 AI 内容无法污染正式 Profile SSOT。
-
----
-
-### 2. Tauri sidecar 发布闭环
+### 1. Tauri sidecar 发布闭环
 
 **Status**：IN PROGRESS  
 **Priority**：P0  
@@ -81,7 +44,7 @@
 
 ---
 
-### 3. 本机 API session token 安全加固
+### 2. 本机 API session token 安全加固
 
 **Status**：IN PROGRESS  
 **Priority**：P0  
@@ -113,7 +76,7 @@
 
 ## P1：产品主链继续补齐
 
-### 4. Dashboard 接真实数据
+### 3. Dashboard 接真实数据
 
 **Status**：TODO  
 **Priority**：P1
@@ -129,7 +92,7 @@
 
 ---
 
-### 5. Application CRM Phase 2
+### 4. Application CRM Phase 2
 
 **Status**：IN PROGRESS  
 **Priority**：P1
@@ -155,7 +118,7 @@
 
 ---
 
-### 6. 设置页
+### 5. 设置页
 
 **Status**：TODO  
 **Priority**：P1
@@ -171,7 +134,7 @@
 
 ## P1：仍需解决的业务一致性问题
 
-### 7. Canonical Job 字段清空语义
+### 6. Canonical Job 字段清空语义
 
 **Status**：TODO  
 **Priority**：P1
@@ -186,7 +149,7 @@
 
 ## P2：工程化与发布质量
 
-### 8. CI / Release pipeline 补齐
+### 7. CI / Release pipeline 补齐
 
 **Status**：IN PROGRESS  
 **Priority**：P2
@@ -212,7 +175,7 @@
 
 ---
 
-### 9. OpenAPI 前后端契约生成
+### 8. OpenAPI 前后端契约生成
 
 **Status**：TODO  
 **Priority**：P2
@@ -224,7 +187,7 @@
 
 ---
 
-### 10. Snapshot / Vault retention policy
+### 9. Snapshot / Vault retention policy
 
 **Status**：TODO  
 **Priority**：P2
@@ -237,13 +200,13 @@
 
 ---
 
-### 11. README / 运行时文档同步
+### 10. README / 运行时文档同步
 
 **Status**：IN PROGRESS  
 **Priority**：P2
 
 - [x] README 已修正部分数据目录 / 当前 Phase 状态。
-- [ ] 更新 Profile Structured Collections / Draft Review 当前状态。
+- [x] 更新 Profile Structured Collections / Draft Review / 统一 AI 提取契约当前状态。
 - [ ] 更新 Tauri sidecar 打包状态。
 - [ ] 写 Release 安装 / 故障排查章节。
 - [ ] 每次完成架构项后同步 TODO 功能基线。
@@ -254,7 +217,7 @@
 
 - [x] main CI 全绿。
 - [x] Profile Structured Collections 已落地。
-- [ ] AI Provider / Extraction Contract 已冻结并完成 run audit / idempotency。
+- [x] AI Provider / Extraction Contract 已冻结并完成 run audit / idempotency。
 - [x] Application CRM SSOT 已确定。
 - [ ] session token 使用 CSPRNG 并完成 auth tests。
 - [x] DNS rebinding / TOCTOU 已通过 pinned-IP 方案关闭。
@@ -267,17 +230,15 @@
 ## 建议执行顺序
 
 ```text
-① 统一 AI Provider / Extraction Contract
+① CSPRNG session token + auth E2E
    ↓
-② CSPRNG session token + auth E2E
+② Tauri sidecar 打包 / installer 闭环
    ↓
-③ Tauri sidecar 打包 / installer 闭环
+③ Application CRM Phase 2 + Dashboard + Settings
    ↓
-④ Application CRM Phase 2 + Dashboard + Settings
+④ Browser Agent（confirmed Profile SSOT + human-confirm gate）
    ↓
-⑤ Browser Agent（confirmed Profile SSOT + human-confirm gate）
-   ↓
-⑥ Release hardening / E2E / installer smoke / dependency audit
+⑤ Release hardening / E2E / installer smoke / dependency audit
 ```
 
 ---
@@ -286,6 +247,11 @@
 
 以下事项已经在当前功能基线落地，并经过 CI 或对应回归测试验证：
 
+- [x] 统一 AI Provider / Extraction Contract：唯一 `ProfileExtractionProvider` 契约（`metadata()` + `extract() → ProfileExtractionBundle`）；`ProfileExtractor/provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨实现已删除。
+- [x] `AIExtractionRun` 持久化（`0009_ai_extraction_runs` migration）：provider / model / prompt_version / schema_version / status / input_hash / error；provider 失败也落 FAILED run 而不是静默丢弃。
+- [x] scalar / collection Draft 均关联 `extraction_run_id` + `candidate_fingerprint`，同一 run 重放不产生重复候选（partial unique index 硬约束）。
+- [x] `Resume → AIExtractionRun → Draft → Review → Profile SSOT` 唯一正式链路；`POST / GET /api/ai/extraction-runs` 已落地，deterministic 导入链路走同一 orchestration。
+- [x] Provider 边界：输入/输出长度上限、timeout、坏 JSON / 空响应 → `ProviderResponseError`，网络 / HTTP 错误 → `ProviderRequestError`，部分非法候选单项丢弃、合法候选保留；OpenAI / DeepSeek / Qwen 切换只改 `AIProviderConfig`。
 - [x] Windows CI heredoc 问题修复；migration smoke 统一进入 pytest。
 - [x] main CI 实际执行并通过 Web / Core / migration / Web build / Cargo metadata / `cargo check` / `tauri build`。
 - [x] Alembic 为生产 schema source-of-truth；当前 migration chain 已扩展至 Profile Collections / Collection Drafts。

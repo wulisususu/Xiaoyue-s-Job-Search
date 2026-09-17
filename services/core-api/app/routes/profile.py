@@ -77,6 +77,7 @@ class ProfileDraftRead(BaseModel):
     resume_version_id: str
     resume_version_number: int
     resume_filename: str
+    extraction_run_id: int | None = None
     field_key: str
     label: str
     category: str
@@ -144,6 +145,7 @@ class ProfileCollectionDraftRead(BaseModel):
     resume_version_id: str
     resume_version_number: int
     resume_filename: str
+    extraction_run_id: int | None = None
     kind: str
     label: str
     payload: dict[str, object]
@@ -185,6 +187,7 @@ def _draft_read(session: Session, draft: ProfileDraftField) -> ProfileDraftRead:
         resume_version_id=draft.resume_version_id,
         resume_version_number=resume.version_number,
         resume_filename=resume.original_filename,
+        extraction_run_id=draft.extraction_run_id,
         field_key=draft.field_key,
         label=definition.label,
         category=definition.category,
@@ -259,6 +262,7 @@ def _collection_draft_read(session: Session, draft: ProfileCollectionDraft) -> P
         resume_version_id=draft.resume_version_id,
         resume_version_number=resume.version_number,
         resume_filename=resume.original_filename,
+        extraction_run_id=draft.extraction_run_id,
         kind=draft.kind,
         label=definition.label,
         payload=json.loads(draft.payload_json),

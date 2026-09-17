@@ -192,14 +192,22 @@ Phase 3A 明确**没有**引入网络 AI、OCR 引擎、Browser Agent、API Key 
 - [x] Profile SSOT / Draft Review UI
 - [x] Windows CI 覆盖 Web / Core / Build / Tauri metadata
 
+### Unified AI Extraction Contract — Phase 3C
+
+- [x] 唯一 `ProfileExtractionProvider` 契约：`metadata()` + `extract() → ProfileExtractionBundle`（scalar 候选 + structured collection 候选 + provider/model/prompt/schema 元数据）
+- [x] `AIExtractionRun` 持久化（`0009_ai_extraction_runs` migration）：provider / model / prompt_version / schema_version / status / input_hash / error；失败也落 FAILED run
+- [x] Draft 幂等：`extraction_run_id` + `candidate_fingerprint` partial unique index，同一 run 重放不产生重复候选
+- [x] `POST / GET /api/ai/extraction-runs` 正式链路入口；deterministic 导入走同一 orchestration
+- [x] Provider 边界：输入/输出长度上限、timeout、bad JSON / 空响应 / 网络 / HTTP 错误分类、部分非法候选单项丢弃
+- [x] 删除 `ProfileExtractor + provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨实现
+
 ## 当前状态与下一阶段
 
-Phase 3B 的基础设施已经落地：`routes/ai.py`（Secure Provider API）、`openai_compatible.py`（网络客户端）、keyring 密钥轮换与 `secret_ref` 隔离均已实现。剩余工作见 `doc/TODO.md`，重点包括：
+Phase 3C 已落地统一 AI 提取契约（见上节）。剩余工作见 `doc/TODO.md`，重点包括：
 
-1. Profile SSOT 升级为结构化集合（Education[] / Experience[] / Project[]…），替代扁平字段与 summary 长文本；
-2. 统一两套 AI 抽象（`ProfileExtractor` vs `OpenAICompatibleClient`），冻结唯一 Provider Contract；
-3. AI 只能生成 Draft，不能直接写入 Profile SSOT；
-4. Tauri sidecar 打包（PyInstaller onedir）与安装器构建；
-5. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
+1. Tauri sidecar 打包（PyInstaller onedir）与安装器构建；
+2. session token 改 CSPRNG 并补 auth E2E；
+3. Application CRM Phase 2、Dashboard 真实数据与设置页；
+4. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
 
 Browser Agent 自动填表继续在 Profile/Provider 数据底座稳定后接入。
