@@ -2,14 +2,23 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import {
   acceptProfileDraft,
+  createProfileCollectionItem,
+  deleteProfileCollectionItem,
   getPendingProfileDrafts,
+  getProfileCollection,
+  getProfileCollectionDefinitions,
   getProfileDefinitions,
   getProfileFields,
   rejectProfileDraft,
+  reorderProfileCollectionItems,
   saveProfileField,
+  updateProfileCollectionItem,
 } from './profileClient';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete window.__XIAOYUE_CORE__;
+});
 
 it('loads the server-owned field registry, confirmed fields and pending drafts', async () => {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -58,5 +67,66 @@ it('accepts, rejects and manually saves profile data through explicit review act
   expect(fetchMock).toHaveBeenCalledWith(
     'http://127.0.0.1:8765/api/profile/fields/identity.name',
     expect.objectContaining({ method: 'PUT', body: JSON.stringify({ value: '赵新悦（更新）' }) }),
+  );
+});
+
+it('uses the sidecar runtime and session token for structured collection CRUD', async () => {
+  window.__XIAOYUE_CORE__ = { baseUrl: 'http://127.0.0.1:9988', sessionToken: 'session-secret' };
+  const item = {
+    id: 7,
+    kind: 'education',
+    position: 0,
+    payload: { school: '三江学院' },
+    source_type: 'manual',
+    source_ref: null,
+    confidence: 1,
+    confirmed: true,
+    created_at: '2026-09-17T10:00:00',
+    updated_at: '2026-09-17T10:00:00',
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    if (url.endsWith('/api/profile/collections/definitions')) {
+      return Promise.resolve(new Response(JSON.stringify([{ kind: 'education', label: '教育经历', fields: [] }]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education/order')) {
+      return Promise.resolve(new Response(JSON.stringify([item]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education/7') && method === 'DELETE') {
+      return Promise.resolve(new Response(JSON.stringify({ deleted_id: 7 }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education/7')) {
+      return Promise.resolve(new Response(JSON.stringify(item), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education') && method === 'GET') {
+      return Promise.resolve(new Response(JSON.stringify([item]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education')) {
+      return Promise.resolve(new Response(JSON.stringify(item), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return Promise.resolve(new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  await getProfileCollectionDefinitions();
+  await getProfileCollection('education');
+  await createProfileCollectionItem('education', { school: '三江学院' });
+  await updateProfileCollectionItem('education', 7, { school: '三江学院' });
+  await reorderProfileCollectionItems('education', [7]);
+  await deleteProfileCollectionItem('education', 7);
+
+  const calls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/profile/collections/'));
+  expect(calls).toHaveLength(6);
+  for (const [, init] of calls) {
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer session-secret');
+  }
+  expect(fetchMock).toHaveBeenCalledWith(
+    'http://127.0.0.1:9988/api/profile/collections/education',
+    expect.objectContaining({ method: 'POST', body: JSON.stringify({ payload: { school: '三江学院' } }) }),
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    'http://127.0.0.1:9988/api/profile/collections/education/order',
+    expect.objectContaining({ method: 'PUT', body: JSON.stringify({ item_ids: [7] }) }),
   );
 });
