@@ -428,13 +428,13 @@ function ProfileCollectionSection({
 
 function CollectionDraftCard({
   draft,
-  index,
+  candidateNumber,
   reviewing,
   onAccept,
   onReject,
 }: {
   draft: ProfileCollectionDraft;
-  index: number;
+  candidateNumber: number;
   reviewing: boolean;
   onAccept: () => void;
   onReject: () => void;
@@ -448,7 +448,7 @@ function CollectionDraftCard({
             置信度 {Math.round((draft.confidence ?? 0) * 100)}%
           </span>
         </div>
-        <h3>{draft.label}候选 {index + 1}</h3>
+        <h3>{draft.label}候选 {candidateNumber}</h3>
         <div className="profile-draft-value">
           {Object.entries(draft.payload).map(([key, value]) => (
             <p key={key}>{displayValue(value)}</p>
@@ -462,7 +462,7 @@ function CollectionDraftCard({
         <button
           className="primary-button"
           type="button"
-          aria-label={`接受 ${draft.label}候选 ${index + 1}`}
+          aria-label={`接受 ${draft.label}候选 ${candidateNumber}`}
           disabled={reviewing}
           onClick={onAccept}
         >
@@ -471,7 +471,7 @@ function CollectionDraftCard({
         <button
           className="secondary-button"
           type="button"
-          aria-label={`拒绝 ${draft.label}候选 ${index + 1}`}
+          aria-label={`拒绝 ${draft.label}候选 ${candidateNumber}`}
           disabled={reviewing}
           onClick={onReject}
         >
@@ -612,11 +612,17 @@ export function ProfilePage() {
     setError(null);
     setMessage(null);
     try {
-      await acceptProfileCollectionDraft(draft.id);
-      setCollectionDrafts((items) => items.filter((item) => item.id !== draft.id));
+      const accepted = await acceptProfileCollectionDraft(draft.id);
+      setCollectionDrafts((items) =>
+        items.map((item) =>
+          item.id === draft.id
+            ? { ...item, status: 'ACCEPTED', reviewed_at: new Date().toISOString() }
+            : item,
+        ),
+      );
       setCollectionRefreshVersions((versions) => ({
         ...versions,
-        [draft.kind]: (versions[draft.kind] ?? 0) + 1,
+        [accepted.kind]: (versions[accepted.kind] ?? 0) + 1,
       }));
       setMessage(`${draft.label}候选已人工确认并写入 Profile SSOT。`);
     } catch (reason) {
@@ -631,8 +637,14 @@ export function ProfilePage() {
     setError(null);
     setMessage(null);
     try {
-      await rejectProfileCollectionDraft(draft.id);
-      setCollectionDrafts((items) => items.filter((item) => item.id !== draft.id));
+      const rejected = await rejectProfileCollectionDraft(draft.id);
+      setCollectionDrafts((items) =>
+        items.map((item) =>
+          item.id === draft.id
+            ? { ...item, status: rejected.status, reviewed_at: rejected.reviewed_at }
+            : item,
+        ),
+      );
       setMessage(`${draft.label}候选已拒绝，正式资料未发生变化。`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : `${draft.label}候选拒绝失败`);
@@ -641,7 +653,8 @@ export function ProfilePage() {
     }
   }
 
-  const totalPendingDrafts = drafts.length + collectionDrafts.length;
+  const pendingCollectionDraftCount = collectionDrafts.filter((draft) => draft.status === 'PENDING').length;
+  const totalPendingDrafts = drafts.length + pendingCollectionDraftCount;
 
   return (
     <section className="page">
@@ -718,16 +731,18 @@ export function ProfilePage() {
                   </article>
                 ))}
 
-                {collectionDrafts.map((draft, index) => (
-                  <CollectionDraftCard
-                    draft={draft}
-                    index={index}
-                    key={`collection-${draft.id}`}
-                    reviewing={reviewingCollectionDraft === draft.id}
-                    onAccept={() => handleAcceptCollectionDraft(draft)}
-                    onReject={() => handleRejectCollectionDraft(draft)}
-                  />
-                ))}
+                {collectionDrafts.map((draft, index) =>
+                  draft.status === 'PENDING' ? (
+                    <CollectionDraftCard
+                      draft={draft}
+                      candidateNumber={index + 1}
+                      key={`collection-${draft.id}`}
+                      reviewing={reviewingCollectionDraft === draft.id}
+                      onAccept={() => handleAcceptCollectionDraft(draft)}
+                      onReject={() => handleRejectCollectionDraft(draft)}
+                    />
+                  ) : null,
+                )}
               </div>
             )}
           </section>
