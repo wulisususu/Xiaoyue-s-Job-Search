@@ -31,7 +31,7 @@ class Company(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
     aliases: Mapped[list["CompanyAlias"]] = relationship(back_populates="company", cascade="all, delete-orphan")
-    __table_args__ = (Index("ix_companies_identity", "normalized_name", "ownership"),)
+    __table_args__ = (Index("ix_companies_identity", "normalized_name", "ownership", unique=True),)
 
 
 class CompanyAlias(Base):

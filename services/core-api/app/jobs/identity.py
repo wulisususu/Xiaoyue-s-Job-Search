@@ -61,6 +61,39 @@ def normalize_job_url(url: str, provider: str = "") -> str:
     return urlunsplit((scheme, host, parts.path or "/", query, fragment))
 
 
+# Portal-level entry points that many different jobs share. They are source
+# evidence, never a job identity.
+_GENERIC_PATH_SEGMENTS = {
+    "campus", "xiaoyuan", "zhaopin", "recruit", "recruitment", "jobs", "job",
+    "career", "careers", "xyz", "shezhao", "shetui", "social", "school",
+    "yjs", "hr", "rencai", "zhaopinhui", "yingjie", "graduation", "gw",
+    "zw", "index", "list", "main", "home", "default",
+}
+
+
+def is_generic_career_url(url: str) -> bool:
+    parts = urlsplit((url or "").strip())
+    path = parts.path.rstrip("/").lower()
+    segments = [segment for segment in path.split("/") if segment]
+    if not segments:
+        return True
+    if len(segments) == 1 and segments[0] in _GENERIC_PATH_SEGMENTS:
+        return True
+    return False
+
+
+def job_identity_url(url: str, provider: str = "company") -> str:
+    """Normalized URL usable as job identity, or '' for generic portals.
+
+    Generic career pages (e.g. https://company.com/campus) are shared by many
+    real jobs, so they must never merge those jobs into one canonical record.
+    """
+    normalized = normalize_job_url(url, provider=provider)
+    if not normalized or is_generic_career_url(normalized):
+        return ""
+    return normalized
+
+
 def _field(value: str) -> str:
     return re.sub(r"\s+", "", (value or "").strip().lower())
 

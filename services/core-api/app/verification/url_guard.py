@@ -8,21 +8,20 @@ from urllib.parse import urlparse
 BLOCKED_SCHEMES = {"file", "ftp", "gopher", "data", "javascript"}
 
 
-def validate_external_url(url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme.lower() in BLOCKED_SCHEMES:
-        raise ValueError("unsupported URL scheme")
-    if parsed.scheme.lower() not in {"http", "https"}:
-        raise ValueError("only http/https URLs are allowed")
-    if not parsed.hostname:
-        raise ValueError("missing hostname")
+def resolve_global_addresses(hostname: str) -> list[str]:
+    """Resolve hostname and return ONLY its globally-routable addresses.
 
-    hostname = parsed.hostname
+    Raises ValueError when the host cannot be resolved or resolves to any
+    private/loopback/link-local/reserved address. Callers should connect to
+    one of the returned addresses directly so that DNS is resolved exactly
+    once per connection (anti DNS-rebinding / TOCTOU).
+    """
     try:
         addresses = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
         raise ValueError("hostname resolution failed") from exc
 
+    global_addresses: list[str] = []
     for item in addresses:
         address = item[4][0]
         try:
@@ -33,3 +32,17 @@ def validate_external_url(url: str) -> None:
             # Covers loopback, RFC1918 private, link-local (incl. the
             # 169.254.169.254 metadata endpoint), ULA, reserved, unspecified.
             raise ValueError("private or reserved address is not allowed")
+        if str(ip) not in global_addresses:
+            global_addresses.append(str(ip))
+    return global_addresses
+
+
+def validate_external_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() in BLOCKED_SCHEMES:
+        raise ValueError("unsupported URL scheme")
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("only http/https URLs are allowed")
+    if not parsed.hostname:
+        raise ValueError("missing hostname")
+    resolve_global_addresses(parsed.hostname)

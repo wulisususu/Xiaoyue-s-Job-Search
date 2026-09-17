@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Job
-from .identity import job_fingerprint, normalize_job_url
+from .identity import job_fingerprint, job_identity_url
 
 
 def _job_id(identity: str) -> str:
@@ -22,7 +22,12 @@ def find_job(
     recruitment_batch: str,
     url: str = "",
 ) -> tuple[Job | None, str, str]:
-    canonical_url = normalize_job_url(url, provider="company") if url else ""
+    """Identity priority:
+    1. specific job-detail URL (canonical_url match)
+    2. company + title + location + batch fingerprint
+    Generic career-portal URLs are NOT an identity: they never merge two
+    genuinely different jobs that merely share the same portal link."""
+    canonical_url = job_identity_url(url) if url else ""
     if canonical_url:
         by_url = session.scalar(select(Job).where(Job.canonical_url == canonical_url))
         if by_url is not None:

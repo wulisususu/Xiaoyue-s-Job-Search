@@ -7,9 +7,9 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..jobs.company_resolver import resolve_company
+from ..jobs.company_resolver import AMBIGUOUS, RESOLVED, resolve_company_detailed
 from ..jobs.deduper import find_job, new_job_id
-from ..jobs.identity import normalize_job_url
+from ..jobs.identity import job_identity_url, normalize_job_url
 from ..models import Job, JobSource, UrlCandidate, utcnow
 from .types import ImportSummary
 
@@ -52,11 +52,14 @@ def _record_url_candidate(session: Session, job: Job, url: str, source_name: str
     canonical_url directly: park the normalized new URL as a PENDING
     candidate for the verification engine to prove before promotion.
     """
-    incoming = normalize_job_url(url, provider="company")
-    if not incoming:
-        incoming = url
+    normalized = normalize_job_url(url, provider="company")
+    incoming = job_identity_url(url)
+    if not normalized or not incoming:
+        # Generic career-portal URLs are source evidence only; they are not
+        # promoted to job identity, so no candidate is needed.
+        return
     current_raw = job.canonical_url or job.apply_url or ""
-    current = normalize_job_url(current_raw, provider="company") or current_raw
+    current = job_identity_url(current_raw) or current_raw
     if not current or incoming == current or incoming == job.apply_url:
         return
     existing = session.scalar(
@@ -132,9 +135,17 @@ def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = 
         deadline = str(record.get("d") or "").strip()
         industry = str(record.get("ind") or record.get("t") or "").strip()
         url = str(record.get("u") or "").strip()
-        company = resolve_company(session, company_name or "未知企业", create_unknown=False)
-        if company is None:
-            company = resolve_company(session, company_name or "未知企业", create_unknown=True)
+        resolution = resolve_company_detailed(session, company_name or "未知企业", create_unknown=False)
+        if resolution.state == AMBIGUOUS:
+            # Ambiguity must never spawn another entity: deterministically
+            # reuse the lowest-id existing match and surface the conflict.
+            summary.ambiguous_companies += 1
+            company = min(resolution.candidates, key=lambda candidate: candidate.id)
+        elif resolution.state == RESOLVED:
+            company = resolution.company
+        else:
+            created = resolve_company_detailed(session, company_name or "未知企业", create_unknown=True)
+            company = created.company
             summary.companies_created += 1
 
         job, canonical_url, fingerprint = find_job(session, company_id=company.id, title=title, location=location, recruitment_batch=batch, url=url)

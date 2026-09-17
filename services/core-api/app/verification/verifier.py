@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import functools
 import hashlib
+import http.client
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
 from .ats import detect_ats
 from .classifier import classify_page
-from .url_guard import validate_external_url
+from .url_guard import resolve_global_addresses, validate_external_url
+
+_HTTPConnection = http.client.HTTPConnection
+_HTTPSConnection = http.client.HTTPSConnection
 
 
 @dataclass(slots=True)
@@ -54,11 +61,75 @@ class _RedirectRecorder(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _resolve_pinned_ip(hostname: str) -> str:
+    """Anti DNS-rebinding: resolve once, validate, and hand back the exact
+    address the socket must connect to."""
+    return resolve_global_addresses(hostname)[0]
+
+
+class _PinnedHTTPConnection(_HTTPConnection):
+    """HTTP connection whose socket targets a pre-validated IP address."""
+
+    def __init__(self, *args, pinned_ip: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self._tunnel()
+
+
+class _PinnedHTTPSConnection(_HTTPSConnection):
+    """HTTPS connection targeting a pre-validated IP while keeping the
+    original hostname for the TLS SNI extension and certificate check."""
+
+    def __init__(self, *args, pinned_ip: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+            sock = self.sock
+        server_hostname = self.host
+        self.sock = self._context.wrap_socket(sock, server_hostname=server_hostname)
+
+
+class _PinningHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):  # noqa: N802 (urllib API)
+        hostname = urllib.parse.urlsplit(req.full_url).hostname
+        pinned = _resolve_pinned_ip(hostname)
+        return self.do_open(
+            functools.partial(_PinnedHTTPConnection, pinned_ip=pinned), req
+        )
+
+
+class _PinningHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):  # noqa: N802 (urllib API)
+        hostname = urllib.parse.urlsplit(req.full_url).hostname
+        pinned = _resolve_pinned_ip(hostname)
+        return self.do_open(
+            functools.partial(_PinnedHTTPSConnection, pinned_ip=pinned),
+            req,
+            context=self._context,
+        )
+
+
 def _default_transport(url: str) -> HttpResponse:
     validate_external_url(url)
     chain = [url]
     recorder = _RedirectRecorder(chain)
-    opener = urllib.request.build_opener(recorder)
+    # The pinning handlers resolve-and-validate at connect time, binding the
+    # DNS answer to the actual socket target (no TOCTOU between validate and
+    # connect). Every redirect hop re-runs both.
+    opener = urllib.request.build_opener(recorder, _PinningHTTPHandler, _PinningHTTPSHandler)
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 XiaoyueJobSearch/0.1"})
     try:
         with opener.open(request, timeout=20) as response:
