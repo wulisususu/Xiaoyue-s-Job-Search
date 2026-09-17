@@ -6,6 +6,7 @@ import { ProfilePage } from './ProfilePage';
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  delete window.__XIAOYUE_CORE__;
 });
 
 it('reviews resume drafts explicitly and keeps confirmed profile as the SSOT', async () => {
@@ -24,6 +25,9 @@ it('reviews resume drafts explicitly and keeps confirmed profile as the SSOT', a
 
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith('/api/profile/collections/definitions')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.endsWith('/api/profile/definitions')) {
       return Promise.resolve(new Response(JSON.stringify(definitions), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
@@ -79,6 +83,9 @@ it('renders every server-defined profile field even before it has a confirmed va
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith('/api/profile/collections/definitions')) {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
       if (url.endsWith('/api/profile/definitions')) {
         return Promise.resolve(new Response(JSON.stringify([
           { field_key: 'education.school', label: '学校', category: '教育经历', value_type: 'string', multiple: false },
@@ -94,4 +101,118 @@ it('renders every server-defined profile field even before it has a confirmed va
   await waitFor(() => expect(screen.getByLabelText('学校')).toBeInTheDocument());
   expect(screen.getByLabelText('目标岗位')).toBeInTheDocument();
   expect(screen.getByText('尚未确认')).toBeInTheDocument();
+});
+
+it('edits repeatable education records independently and preserves server order', async () => {
+  const collectionDefinitions = [
+    {
+      kind: 'education',
+      label: '教育经历',
+      fields: [
+        { key: 'school', label: '学校', value_type: 'string', required: true, multiple: false },
+        { key: 'degree', label: '学历/学位', value_type: 'string', required: false, multiple: false },
+      ],
+    },
+  ];
+  const first = {
+    id: 1,
+    kind: 'education',
+    position: 0,
+    payload: { school: '三江学院', degree: '本科' },
+    source_type: 'manual',
+    source_ref: null,
+    confidence: 1,
+    confirmed: true,
+    created_at: '2026-09-17T10:00:00',
+    updated_at: '2026-09-17T10:00:00',
+  };
+  const second = {
+    id: 2,
+    kind: 'education',
+    position: 1,
+    payload: { school: '第二学校' },
+    source_type: 'manual',
+    source_ref: null,
+    confidence: 1,
+    confirmed: true,
+    created_at: '2026-09-17T10:01:00',
+    updated_at: '2026-09-17T10:01:00',
+  };
+  const updatedFirst = { ...first, payload: { school: '三江学院（更新）', degree: '本科' }, updated_at: '2026-09-17T10:10:00' };
+  const third = {
+    id: 3,
+    kind: 'education',
+    position: 1,
+    payload: { school: '新学校' },
+    source_type: 'manual',
+    source_ref: null,
+    confidence: 1,
+    confirmed: true,
+    created_at: '2026-09-17T10:11:00',
+    updated_at: '2026-09-17T10:11:00',
+  };
+
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? 'GET';
+    if (url.endsWith('/api/profile/collections/definitions')) {
+      return Promise.resolve(new Response(JSON.stringify(collectionDefinitions), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education/order') && method === 'PUT') {
+      return Promise.resolve(new Response(JSON.stringify([
+        { ...third, position: 0 },
+        { ...updatedFirst, position: 1 },
+      ]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education/1') && method === 'PUT') {
+      return Promise.resolve(new Response(JSON.stringify(updatedFirst), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education/2') && method === 'DELETE') {
+      return Promise.resolve(new Response(JSON.stringify({ deleted_id: 2 }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education') && method === 'POST') {
+      return Promise.resolve(new Response(JSON.stringify(third), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collections/education')) {
+      return Promise.resolve(new Response(JSON.stringify([first, second]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/definitions') || url.endsWith('/api/profile/fields') || url.endsWith('/api/profile/drafts?status=PENDING')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return Promise.resolve(new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<ProfilePage />);
+
+  await waitFor(() => expect(screen.getByDisplayValue('三江学院')).toBeInTheDocument());
+  expect(screen.getByDisplayValue('第二学校')).toBeInTheDocument();
+
+  const firstCard = screen.getByTestId('profile-collection-education-1');
+  fireEvent.change(within(firstCard).getByLabelText('教育经历 1 学校'), { target: { value: '三江学院（更新）' } });
+  fireEvent.click(within(firstCard).getByRole('button', { name: '保存 教育经历 1' }));
+  await waitFor(() => expect(screen.getByDisplayValue('三江学院（更新）')).toBeInTheDocument());
+
+  const secondCard = screen.getByTestId('profile-collection-education-2');
+  fireEvent.click(within(secondCard).getByRole('button', { name: '删除 教育经历 2' }));
+  await waitFor(() => expect(screen.queryByTestId('profile-collection-education-2')).not.toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole('button', { name: '新增教育经历' }));
+  fireEvent.change(screen.getByLabelText('新增教育经历 学校'), { target: { value: '新学校' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存新增教育经历' }));
+  await waitFor(() => expect(screen.getByTestId('profile-collection-education-3')).toBeInTheDocument());
+
+  const newCard = screen.getByTestId('profile-collection-education-3');
+  fireEvent.click(within(newCard).getByRole('button', { name: '上移 教育经历 2' }));
+
+  await waitFor(() => {
+    const section = screen.getByTestId('profile-collection-education');
+    const cards = within(section).getAllByTestId(/profile-collection-education-\d+/);
+    expect(within(cards[0]).getByDisplayValue('新学校')).toBeInTheDocument();
+    expect(within(cards[1]).getByDisplayValue('三江学院（更新）')).toBeInTheDocument();
+  });
+  expect(fetchMock).toHaveBeenCalledWith(
+    'http://127.0.0.1:8765/api/profile/collections/education/order',
+    expect.objectContaining({ method: 'PUT', body: JSON.stringify({ item_ids: [3, 1] }) }),
+  );
 });
