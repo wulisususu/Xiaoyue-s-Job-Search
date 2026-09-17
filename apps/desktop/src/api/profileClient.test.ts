@@ -1,14 +1,17 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
 import {
+  acceptProfileCollectionDraft,
   acceptProfileDraft,
   createProfileCollectionItem,
   deleteProfileCollectionItem,
+  getPendingProfileCollectionDrafts,
   getPendingProfileDrafts,
   getProfileCollection,
   getProfileCollectionDefinitions,
   getProfileDefinitions,
   getProfileFields,
+  rejectProfileCollectionDraft,
   rejectProfileDraft,
   reorderProfileCollectionItems,
   saveProfileField,
@@ -128,5 +131,71 @@ it('uses the sidecar runtime and session token for structured collection CRUD', 
   expect(fetchMock).toHaveBeenCalledWith(
     'http://127.0.0.1:9988/api/profile/collections/education/order',
     expect.objectContaining({ method: 'PUT', body: JSON.stringify({ item_ids: [7] }) }),
+  );
+});
+
+it('reviews structured collection drafts through the sidecar-authenticated Profile API', async () => {
+  window.__XIAOYUE_CORE__ = { baseUrl: 'http://127.0.0.1:9988', sessionToken: 'session-secret' };
+  const draft = {
+    id: 21,
+    resume_version_id: 'resume-1',
+    resume_version_number: 2,
+    resume_filename: '基础简历.pdf',
+    kind: 'education',
+    label: '教育经历',
+    payload: { school: '三江学院', major: '视觉传达设计' },
+    confidence: 0.96,
+    extractor_name: 'openai-compatible-v1',
+    status: 'PENDING',
+    created_at: '2026-09-17T10:00:00',
+    reviewed_at: null,
+  };
+  const item = {
+    id: 7,
+    kind: 'education',
+    position: 0,
+    payload: draft.payload,
+    source_type: 'resume',
+    source_ref: 'resume-1',
+    confidence: 0.96,
+    confirmed: true,
+    created_at: '2026-09-17T10:01:00',
+    updated_at: '2026-09-17T10:01:00',
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith('/api/profile/collection-drafts?status=PENDING')) {
+      return Promise.resolve(new Response(JSON.stringify([draft]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collection-drafts/21/accept')) {
+      return Promise.resolve(new Response(JSON.stringify(item), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/collection-drafts/21/reject')) {
+      return Promise.resolve(new Response(JSON.stringify({ ...draft, status: 'REJECTED', reviewed_at: '2026-09-17T10:02:00' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return Promise.resolve(new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  const drafts = await getPendingProfileCollectionDrafts();
+  const accepted = await acceptProfileCollectionDraft(21);
+  const rejected = await rejectProfileCollectionDraft(21);
+
+  expect(drafts[0].payload.school).toBe('三江学院');
+  expect(accepted.source_type).toBe('resume');
+  expect(rejected.status).toBe('REJECTED');
+
+  const reviewCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/profile/collection-drafts'));
+  expect(reviewCalls).toHaveLength(3);
+  for (const [, init] of reviewCalls) {
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer session-secret');
+  }
+  expect(fetchMock).toHaveBeenCalledWith(
+    'http://127.0.0.1:9988/api/profile/collection-drafts/21/accept',
+    expect.objectContaining({ method: 'POST' }),
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    'http://127.0.0.1:9988/api/profile/collection-drafts/21/reject',
+    expect.objectContaining({ method: 'POST' }),
   );
 });
