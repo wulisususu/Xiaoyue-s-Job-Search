@@ -77,12 +77,13 @@ def test_collection_crud_reorder_and_revisions_are_atomic(client):
     assert [item["id"] for item in reordered.json()] == [second_body["id"], first_body["id"]]
     assert [item["position"] for item in reordered.json()] == [0, 1]
 
-    deleted = client.delete(f"/api/profile/collections/education/{first_body['id']}")
+    # Delete position 0 so the remaining item must be compacted from 1 -> 0.
+    deleted = client.delete(f"/api/profile/collections/education/{second_body['id']}")
     assert deleted.status_code == 200
-    assert deleted.json() == {"deleted_id": first_body["id"]}
+    assert deleted.json() == {"deleted_id": second_body["id"]}
 
     remaining = client.get("/api/profile/collections/education")
-    assert [item["id"] for item in remaining.json()] == [second_body["id"]]
+    assert [item["id"] for item in remaining.json()] == [first_body["id"]]
     assert remaining.json()[0]["position"] == 0
 
     engine = get_engine(get_settings())
