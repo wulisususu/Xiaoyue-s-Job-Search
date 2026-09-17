@@ -10,7 +10,7 @@ The startup path is empty DB -> alembic upgrade head. These tests verify:
 from __future__ import annotations
 
 from alembic import command
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.config import AppSettings
@@ -34,6 +34,7 @@ def test_fresh_db_is_built_by_migration_chain_and_is_idempotent(tmp_path):
             "ai_provider_configs", "resume_versions", "profile_fields",
             "profile_field_revisions", "profile_draft_fields",
             "profile_collection_items", "profile_collection_revisions",
+            "ai_extraction_runs",
             "application_sessions", "url_candidates", "alembic_version",
         ):
             assert expected in tables, f"missing table {expected}"
@@ -134,6 +135,67 @@ def test_pre_collection_db_upgrades_to_structured_profile_head(tmp_path):
         assert "profile_fields" in after
         assert "profile_collection_items" in after
         assert "profile_collection_revisions" in after
+    finally:
+        engine.dispose()
+
+
+def test_0008_db_upgrades_to_0009_with_extraction_run_linkage(tmp_path):
+    """A real 0008 database gains ai_extraction_runs plus draft linkage and
+    idempotency columns, while existing draft rows stay untouched."""
+    settings = _settings(tmp_path)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    command.upgrade(_alembic_config(settings), "0008_profile_collection_drafts")
+
+    engine = create_engine(f"sqlite:///{settings.database_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO resume_versions (id, sha256, original_filename, file_ext,"
+                " mime_type, size_bytes, vault_relpath, version_number, extraction_status,"
+                " created_at) VALUES ('rv-legacy', 'legacyhash', 'legacy.pdf', '.pdf',"
+                " 'application/pdf', 1, 'resumes/hash/original.pdf', 1, 'EXTRACTED',"
+                " '2026-01-01 00:00:00')"
+            ))
+            conn.execute(text(
+                "INSERT INTO profile_draft_fields (resume_version_id, field_key,"
+                " value_json, value_type, confidence, extractor_name, status, created_at)"
+                " VALUES ('rv-legacy', 'contact.email', '\"a@b.com\"', 'string', 0.9,"
+                " 'deterministic-contact-v1', 'PENDING', '2026-01-01 00:00:00')"
+            ))
+        assert "ai_extraction_runs" not in set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+    init_db(settings)
+
+    engine = get_engine(settings)
+    try:
+        inspector = inspect(engine)
+        assert "ai_extraction_runs" in set(inspector.get_table_names())
+        run_columns = {c["name"] for c in inspector.get_columns("ai_extraction_runs")}
+        assert {
+            "id", "resume_version_id", "provider", "model", "prompt_version",
+            "schema_version", "status", "input_hash", "error",
+            "created_at", "completed_at",
+        } <= run_columns
+        for table in ("profile_draft_fields", "profile_collection_drafts"):
+            columns = {c["name"] for c in inspector.get_columns(table)}
+            assert {"extraction_run_id", "candidate_fingerprint"} <= columns, table
+            unique_pairs = {
+                tuple(index["column_names"])
+                for index in inspector.get_indexes(table)
+                if index.get("unique")
+            }
+            assert ("extraction_run_id", "candidate_fingerprint") in unique_pairs, table
+
+        with Session(engine) as session:
+            legacy = session.execute(
+                text(
+                    "SELECT resume_version_id, field_key, extraction_run_id,"
+                    " candidate_fingerprint, status FROM profile_draft_fields"
+                )
+            ).all()
+        assert legacy == [("rv-legacy", "contact.email", None, None, "PENDING")]
     finally:
         engine.dispose()
 
