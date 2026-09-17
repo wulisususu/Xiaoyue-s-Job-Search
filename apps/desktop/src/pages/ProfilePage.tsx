@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
+  acceptProfileCollectionDraft,
   acceptProfileDraft,
   createProfileCollectionItem,
   deleteProfileCollectionItem,
+  getPendingProfileCollectionDrafts,
   getPendingProfileDrafts,
   getProfileCollection,
   getProfileCollectionDefinitions,
   getProfileDefinitions,
   getProfileFields,
+  rejectProfileCollectionDraft,
   rejectProfileDraft,
   reorderProfileCollectionItems,
   saveProfileField,
   updateProfileCollectionItem,
   type ProfileCollectionDefinition,
+  type ProfileCollectionDraft,
   type ProfileCollectionFieldDefinition,
   type ProfileCollectionItem,
   type ProfileDefinition,
@@ -67,7 +71,9 @@ function collectionItemEditor(
   item: ProfileCollectionItem,
 ): Record<string, string> {
   const values: Record<string, string> = {};
-  for (const field of definition.fields) values[field.key] = valueToEditorText(item.payload[field.key]);
+  for (const field of definition.fields) {
+    values[field.key] = valueToEditorText(item.payload[field.key]);
+  }
   return values;
 }
 
@@ -93,13 +99,11 @@ function collectionEditorPayload(
 }
 
 function CollectionInput({
-  definition,
   field,
   values,
   setValue,
   ariaPrefix,
 }: {
-  definition: ProfileCollectionDefinition;
   field: ProfileCollectionFieldDefinition;
   values: Record<string, string>;
   setValue: (key: string, value: string) => void;
@@ -135,10 +139,12 @@ function CollectionInput({
 
 function ProfileCollectionSection({
   definition,
+  refreshVersion,
   onMessage,
   onError,
 }: {
   definition: ProfileCollectionDefinition;
+  refreshVersion: number;
   onMessage: (message: string) => void;
   onError: (message: string) => void;
 }) {
@@ -150,10 +156,14 @@ function ProfileCollectionSection({
   const [loading, setLoading] = useState(true);
 
   function syncItems(nextItems: ProfileCollectionItem[]) {
-    const ordered = [...nextItems].sort((left, right) => left.position - right.position || left.id - right.id);
+    const ordered = [...nextItems].sort(
+      (left, right) => left.position - right.position || left.id - right.id,
+    );
     setItems(ordered);
     const nextEditors: Record<number, Record<string, string>> = {};
-    for (const item of ordered) nextEditors[item.id] = collectionItemEditor(definition, item);
+    for (const item of ordered) {
+      nextEditors[item.id] = collectionItemEditor(definition, item);
+    }
     setEditors(nextEditors);
   }
 
@@ -173,7 +183,7 @@ function ProfileCollectionSection({
     return () => {
       active = false;
     };
-  }, [definition.kind]);
+  }, [definition.kind, refreshVersion]);
 
   function updateEditor(itemId: number, key: string, value: string) {
     setEditors((current) => ({
@@ -190,7 +200,10 @@ function ProfileCollectionSection({
       const payload = collectionEditorPayload(definition, editors[item.id] ?? {});
       const saved = await updateProfileCollectionItem(definition.kind, item.id, payload);
       setItems((current) => current.map((entry) => (entry.id === saved.id ? saved : entry)));
-      setEditors((current) => ({ ...current, [saved.id]: collectionItemEditor(definition, saved) }));
+      setEditors((current) => ({
+        ...current,
+        [saved.id]: collectionItemEditor(definition, saved),
+      }));
       onMessage(`${definition.label} ${index + 1} 已保存。`);
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : `${definition.label}保存失败`);
@@ -242,14 +255,12 @@ function ProfileCollectionSection({
   }
 
   async function handleCreate() {
-    const action = 'create';
-    setBusyAction(action);
+    setBusyAction('create');
     onError('');
     try {
       const payload = collectionEditorPayload(definition, newEditor);
       const created = await createProfileCollectionItem(definition.kind, payload);
-      const nextItems = [...items, created];
-      syncItems(nextItems);
+      syncItems([...items, created]);
       setAdding(false);
       setNewEditor({});
       onMessage(`新的${definition.label}已写入 Profile SSOT。`);
@@ -312,7 +323,6 @@ function ProfileCollectionSection({
                 {definition.fields.map((field) => (
                   <CollectionInput
                     ariaPrefix={`${definition.label} ${index + 1}`}
-                    definition={definition}
                     field={field}
                     key={field.key}
                     values={values}
@@ -363,7 +373,10 @@ function ProfileCollectionSection({
         })}
 
         {adding && (
-          <article className="profile-collection-card profile-collection-card-new" data-testid={`profile-collection-new-${definition.kind}`}>
+          <article
+            className="profile-collection-card profile-collection-card-new"
+            data-testid={`profile-collection-new-${definition.kind}`}
+          >
             <div className="profile-collection-card-heading">
               <div>
                 <h3>新增{definition.label}</h3>
@@ -374,11 +387,12 @@ function ProfileCollectionSection({
               {definition.fields.map((field) => (
                 <CollectionInput
                   ariaPrefix={`新增${definition.label}`}
-                  definition={definition}
                   field={field}
                   key={field.key}
                   values={newEditor}
-                  setValue={(key, value) => setNewEditor((current) => ({ ...current, [key]: value }))}
+                  setValue={(key, value) =>
+                    setNewEditor((current) => ({ ...current, [key]: value }))
+                  }
                 />
               ))}
             </div>
@@ -412,17 +426,76 @@ function ProfileCollectionSection({
   );
 }
 
+function CollectionDraftCard({
+  draft,
+  index,
+  reviewing,
+  onAccept,
+  onReject,
+}: {
+  draft: ProfileCollectionDraft;
+  index: number;
+  reviewing: boolean;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <article className="profile-draft-card">
+      <div>
+        <div className="badge-row">
+          <span className="soft-badge">结构化 · {draft.label}</span>
+          <span className="soft-badge verified">
+            置信度 {Math.round((draft.confidence ?? 0) * 100)}%
+          </span>
+        </div>
+        <h3>{draft.label}候选 {index + 1}</h3>
+        <div className="profile-draft-value">
+          {Object.entries(draft.payload).map(([key, value]) => (
+            <p key={key}>{displayValue(value)}</p>
+          ))}
+        </div>
+        <p className="profile-draft-source">
+          {draft.resume_filename} · V{draft.resume_version_number}
+        </p>
+      </div>
+      <div className="profile-draft-actions">
+        <button
+          className="primary-button"
+          type="button"
+          aria-label={`接受 ${draft.label}候选 ${index + 1}`}
+          disabled={reviewing}
+          onClick={onAccept}
+        >
+          接受
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          aria-label={`拒绝 ${draft.label}候选 ${index + 1}`}
+          disabled={reviewing}
+          onClick={onReject}
+        >
+          拒绝
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function ProfilePage() {
   const [definitions, setDefinitions] = useState<ProfileDefinition[]>([]);
   const [fields, setFields] = useState<ProfileField[]>([]);
   const [drafts, setDrafts] = useState<ProfileDraft[]>([]);
   const [collectionDefinitions, setCollectionDefinitions] = useState<ProfileCollectionDefinition[]>([]);
+  const [collectionDrafts, setCollectionDrafts] = useState<ProfileCollectionDraft[]>([]);
+  const [collectionRefreshVersions, setCollectionRefreshVersions] = useState<Record<string, number>>({});
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [savingField, setSavingField] = useState<string | null>(null);
   const [reviewingDraft, setReviewingDraft] = useState<number | null>(null);
+  const [reviewingCollectionDraft, setReviewingCollectionDraft] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -431,13 +504,21 @@ export function ProfilePage() {
       getProfileFields(),
       getPendingProfileDrafts(),
       getProfileCollectionDefinitions(),
+      getPendingProfileCollectionDrafts(),
     ])
-      .then(([nextDefinitions, nextFields, nextDrafts, nextCollectionDefinitions]) => {
+      .then(([
+        nextDefinitions,
+        nextFields,
+        nextDrafts,
+        nextCollectionDefinitions,
+        nextCollectionDrafts,
+      ]) => {
         if (!active) return;
         setDefinitions(nextDefinitions);
         setFields(nextFields);
         setDrafts(nextDrafts);
         setCollectionDefinitions(nextCollectionDefinitions);
+        setCollectionDrafts(nextCollectionDrafts);
         const nextEditValues: Record<string, string> = {};
         for (const definition of nextDefinitions) {
           const field = nextFields.find((item) => item.field_key === definition.field_key);
@@ -479,7 +560,10 @@ export function ProfilePage() {
       const value = parseEditorValue(definition, editValues[definition.field_key] ?? '');
       const saved = await saveProfileField(definition.field_key, value);
       setFields((items) => upsertField(items, saved));
-      setEditValues((items) => ({ ...items, [definition.field_key]: valueToEditorText(saved.value) }));
+      setEditValues((items) => ({
+        ...items,
+        [definition.field_key]: valueToEditorText(saved.value),
+      }));
       setMessage(`${definition.label}已保存并写入 Profile SSOT。`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : `${definition.label}保存失败`);
@@ -495,7 +579,10 @@ export function ProfilePage() {
     try {
       const accepted = await acceptProfileDraft(draft.id);
       setFields((items) => upsertField(items, accepted));
-      setEditValues((items) => ({ ...items, [accepted.field_key]: valueToEditorText(accepted.value) }));
+      setEditValues((items) => ({
+        ...items,
+        [accepted.field_key]: valueToEditorText(accepted.value),
+      }));
       setDrafts((items) => items.filter((item) => item.id !== draft.id));
       setMessage(`${draft.label}候选已人工确认并写入 Profile SSOT。`);
     } catch (reason) {
@@ -519,6 +606,42 @@ export function ProfilePage() {
       setReviewingDraft(null);
     }
   }
+
+  async function handleAcceptCollectionDraft(draft: ProfileCollectionDraft) {
+    setReviewingCollectionDraft(draft.id);
+    setError(null);
+    setMessage(null);
+    try {
+      await acceptProfileCollectionDraft(draft.id);
+      setCollectionDrafts((items) => items.filter((item) => item.id !== draft.id));
+      setCollectionRefreshVersions((versions) => ({
+        ...versions,
+        [draft.kind]: (versions[draft.kind] ?? 0) + 1,
+      }));
+      setMessage(`${draft.label}候选已人工确认并写入 Profile SSOT。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : `${draft.label}候选确认失败`);
+    } finally {
+      setReviewingCollectionDraft(null);
+    }
+  }
+
+  async function handleRejectCollectionDraft(draft: ProfileCollectionDraft) {
+    setReviewingCollectionDraft(draft.id);
+    setError(null);
+    setMessage(null);
+    try {
+      await rejectProfileCollectionDraft(draft.id);
+      setCollectionDrafts((items) => items.filter((item) => item.id !== draft.id));
+      setMessage(`${draft.label}候选已拒绝，正式资料未发生变化。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : `${draft.label}候选拒绝失败`);
+    } finally {
+      setReviewingCollectionDraft(null);
+    }
+  }
+
+  const totalPendingDrafts = drafts.length + collectionDrafts.length;
 
   return (
     <section className="page">
@@ -550,23 +673,27 @@ export function ProfilePage() {
                 <h2 id="profile-draft-title">待审核候选</h2>
                 <p>候选值来自简历解析。点击“接受”前，它们不会进入正式 Profile，也不会参与自动填表。</p>
               </div>
-              <span className="soft-badge warning">{drafts.length} 项</span>
+              <span className="soft-badge warning">{totalPendingDrafts} 项</span>
             </div>
 
-            {drafts.length === 0 ? (
+            {totalPendingDrafts === 0 ? (
               <p className="profile-empty-note">当前没有待审核的简历候选。</p>
             ) : (
               <div className="profile-draft-list">
                 {drafts.map((draft) => (
-                  <article className="profile-draft-card" key={draft.id}>
+                  <article className="profile-draft-card" key={`scalar-${draft.id}`}>
                     <div>
                       <div className="badge-row">
                         <span className="soft-badge">{draft.category}</span>
-                        <span className="soft-badge verified">置信度 {Math.round((draft.confidence ?? 0) * 100)}%</span>
+                        <span className="soft-badge verified">
+                          置信度 {Math.round((draft.confidence ?? 0) * 100)}%
+                        </span>
                       </div>
                       <h3>{draft.label}</h3>
                       <p className="profile-draft-value">{displayValue(draft.value)}</p>
-                      <p className="profile-draft-source">{draft.resume_filename} · V{draft.resume_version_number}</p>
+                      <p className="profile-draft-source">
+                        {draft.resume_filename} · V{draft.resume_version_number}
+                      </p>
                     </div>
                     <div className="profile-draft-actions">
                       <button
@@ -590,6 +717,17 @@ export function ProfilePage() {
                     </div>
                   </article>
                 ))}
+
+                {collectionDrafts.map((draft, index) => (
+                  <CollectionDraftCard
+                    draft={draft}
+                    index={index}
+                    key={`collection-${draft.id}`}
+                    reviewing={reviewingCollectionDraft === draft.id}
+                    onAccept={() => handleAcceptCollectionDraft(draft)}
+                    onReject={() => handleRejectCollectionDraft(draft)}
+                  />
+                ))}
               </div>
             )}
           </section>
@@ -606,6 +744,7 @@ export function ProfilePage() {
                   <ProfileCollectionSection
                     definition={definition}
                     key={definition.kind}
+                    refreshVersion={collectionRefreshVersions[definition.kind] ?? 0}
                     onError={(nextError) => {
                       setMessage(null);
                       setError(nextError || null);
@@ -638,7 +777,8 @@ export function ProfilePage() {
                   <div className="profile-field-list">
                     {categoryDefinitions.map((definition) => {
                       const field = fieldsByKey.get(definition.field_key);
-                      const isLongText = definition.multiple || definition.field_key.endsWith('.summary');
+                      const isLongText =
+                        definition.multiple || definition.field_key.endsWith('.summary');
                       return (
                         <div
                           className="profile-field-row"
@@ -651,9 +791,16 @@ export function ProfilePage() {
                               <textarea
                                 aria-label={definition.label}
                                 rows={definition.multiple ? 3 : 4}
-                                placeholder={definition.multiple ? '每行填写一项' : `填写${definition.label}`}
+                                placeholder={
+                                  definition.multiple ? '每行填写一项' : `填写${definition.label}`
+                                }
                                 value={editValues[definition.field_key] ?? ''}
-                                onChange={(event) => setEditValues((items) => ({ ...items, [definition.field_key]: event.target.value }))}
+                                onChange={(event) =>
+                                  setEditValues((items) => ({
+                                    ...items,
+                                    [definition.field_key]: event.target.value,
+                                  }))
+                                }
                               />
                             ) : (
                               <input
@@ -661,13 +808,22 @@ export function ProfilePage() {
                                 type="text"
                                 placeholder={`填写${definition.label}`}
                                 value={editValues[definition.field_key] ?? ''}
-                                onChange={(event) => setEditValues((items) => ({ ...items, [definition.field_key]: event.target.value }))}
+                                onChange={(event) =>
+                                  setEditValues((items) => ({
+                                    ...items,
+                                    [definition.field_key]: event.target.value,
+                                  }))
+                                }
                               />
                             )}
                           </label>
                           <div className="profile-field-meta">
-                            <span className={`soft-badge${field ? ' verified' : ''}`}>{sourceLabel(field)}</span>
-                            {field?.updated_at && <span>更新于 {new Date(field.updated_at).toLocaleString('zh-CN')}</span>}
+                            <span className={`soft-badge${field ? ' verified' : ''}`}>
+                              {sourceLabel(field)}
+                            </span>
+                            {field?.updated_at && (
+                              <span>更新于 {new Date(field.updated_at).toLocaleString('zh-CN')}</span>
+                            )}
                           </div>
                           <button
                             className="secondary-button"
