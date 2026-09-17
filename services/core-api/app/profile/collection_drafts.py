@@ -2,21 +2,22 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from ..models import ProfileCollectionDraft, ProfileCollectionItem, ResumeVersion, utcnow
 from .collection_service import create_collection_item_uncommitted
 from .collections import validate_collection_payload
+from .extraction import CollectionDraftCandidate
 
-
-@dataclass(frozen=True, slots=True)
-class CollectionDraftCandidate:
-    kind: str
-    payload: dict[str, object]
-    confidence: float | None
-    extractor_name: str
+__all__ = [
+    "CollectionDraftCandidate",
+    "ProfileCollectionDraftAlreadyReviewedError",
+    "ProfileCollectionDraftNotFoundError",
+    "accept_collection_draft",
+    "create_collection_drafts",
+    "reject_collection_draft",
+]
 
 
 class ProfileCollectionDraftNotFoundError(LookupError):
