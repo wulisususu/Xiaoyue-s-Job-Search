@@ -112,10 +112,26 @@ fn prune_old_logs(dir: &PathBuf, keep: usize) {
     }
 }
 
+/// Explicit launch outcome: dev (nothing bundled) stays quiet, a bundled
+/// but broken sidecar surfaces a diagnosable reason to the UI.
+enum SidecarLaunch {
+    Launched(CoreSidecar),
+    /// Dev shell: nothing bundled, nothing to show (expected path).
+    NotBundled,
+    /// Bundled but failed: the user must see a diagnosable reason.
+    Failed(String),
+}
+
 impl CoreSidecar {
-    fn launch() -> Option<CoreSidecar> {
-        let core_bin = find_core_bin()?;
-        let port = pick_free_port().ok()?;
+    fn launch() -> SidecarLaunch {
+        let core_bin = match find_core_bin() {
+            Some(path) => path,
+            None => return SidecarLaunch::NotBundled,
+        };
+        let port = match pick_free_port() {
+            Ok(port) => port,
+            Err(e) => return SidecarLaunch::Failed(format!("无法分配本地端口: {e}")),
+        };
         let session_token = generate_session_token();
         let data_dir = std::env::var("XIAOYUE_DATA_DIR").unwrap_or_else(|_| {
             let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
@@ -154,13 +170,22 @@ impl CoreSidecar {
                 command.stderr(Stdio::null());
             }
         }
-        let child = command.spawn().ok()?;
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => return SidecarLaunch::Failed(format!("spawn 失败: {e}")),
+        };
 
         let endpoint = format!("127.0.0.1:{}", port);
         if !wait_until_healthy(&endpoint, Duration::from_secs(30)) {
-            eprintln!("core-api sidecar did not become healthy in time");
+            // Health probe failed: do not leak an orphan child process.
+            let mut child = child;
+            let _ = child.kill();
+            let _ = child.wait();
+            return SidecarLaunch::Failed(
+                "sidecar 30 秒内未通过健康检查，详见数据目录 logs/ 下 core-*.err.log".into(),
+            );
         }
-        Some(CoreSidecar {
+        SidecarLaunch::Launched(CoreSidecar {
             child: Some(child),
             endpoint,
             session_token,
@@ -177,21 +202,72 @@ impl CoreSidecar {
 
 #[derive(serde::Serialize)]
 struct CoreEndpointInfo {
-    base_url: String,
-    session_token: String,
+    base_url: Option<String>,
+    session_token: Option<String>,
+    status: String,
+    detail: Option<String>,
+}
+
+struct CoreSidecarState {
+    sidecar: Option<CoreSidecar>,
+    failure_detail: Option<String>,
+}
+
+impl CoreSidecarState {
+    fn from_launch(launch: SidecarLaunch) -> CoreSidecarState {
+        match launch {
+            SidecarLaunch::Launched(sidecar) => CoreSidecarState {
+                sidecar: Some(sidecar),
+                failure_detail: None,
+            },
+            SidecarLaunch::NotBundled => CoreSidecarState {
+                sidecar: None,
+                failure_detail: None,
+            },
+            SidecarLaunch::Failed(detail) => CoreSidecarState {
+                sidecar: None,
+                failure_detail: Some(detail),
+            },
+        }
+    }
 }
 
 #[tauri::command]
-fn core_endpoint(state: tauri::State<'_, Mutex<Option<CoreSidecar>>>) -> Option<CoreEndpointInfo> {
-    let guard = state.lock().ok()?;
-    guard.as_ref().map(|sidecar| CoreEndpointInfo {
-        base_url: format!("http://{}", sidecar.endpoint),
-        session_token: sidecar.session_token.clone(),
-    })
+fn core_endpoint(state: tauri::State<'_, Mutex<CoreSidecarState>>) -> CoreEndpointInfo {
+    match state.lock() {
+        Ok(guard) => match &guard.sidecar {
+            Some(sidecar) => CoreEndpointInfo {
+                base_url: Some(format!("http://{}", sidecar.endpoint)),
+                session_token: Some(sidecar.session_token.clone()),
+                status: "launched".into(),
+                detail: None,
+            },
+            None => match &guard.failure_detail {
+                Some(detail) => CoreEndpointInfo {
+                    base_url: None,
+                    session_token: None,
+                    status: "failed".into(),
+                    detail: Some(detail.clone()),
+                },
+                None => CoreEndpointInfo {
+                    base_url: None,
+                    session_token: None,
+                    status: "unbundled".into(),
+                    detail: None,
+                },
+            },
+        },
+        Err(_) => CoreEndpointInfo {
+            base_url: None,
+            session_token: None,
+            status: "failed".into(),
+            detail: Some("internal state poisoned".into()),
+        },
+    }
 }
 
 fn main() {
-    let sidecar = Mutex::new(CoreSidecar::launch());
+    let sidecar = Mutex::new(CoreSidecarState::from_launch(CoreSidecar::launch()));
     tauri::Builder::default()
         .manage(sidecar)
         .invoke_handler(tauri::generate_handler![core_endpoint])
@@ -199,9 +275,9 @@ fn main() {
         .expect("error while building Xiaoyue Job Search")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                if let Some(state) = app_handle.try_state::<Mutex<Option<CoreSidecar>>>() {
+                if let Some(state) = app_handle.try_state::<Mutex<CoreSidecarState>>() {
                     if let Ok(mut guard) = state.lock() {
-                        if let Some(sidecar) = guard.as_mut() {
+                        if let Some(sidecar) = guard.sidecar.as_mut() {
                             sidecar.shutdown();
                         }
                     }
