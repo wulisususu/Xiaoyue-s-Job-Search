@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-import pytest
+import json
 
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+
+from app.models import Base, ProfileCollectionItem, ProfileCollectionRevision
 from app.profile.collections import COLLECTION_REGISTRY, get_collection_definition, validate_collection_payload
 
 
@@ -91,3 +96,55 @@ def test_definitions_expose_labels_and_ordered_field_metadata():
     assert education.label == "教育经历"
     assert [field.key for field in education.fields][:3] == ["school", "degree", "major"]
     assert education.fields[0].required is True
+
+
+def test_profile_collection_items_support_multiple_stable_ordered_records(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'collections.db'}")
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine) as session:
+            first = ProfileCollectionItem(
+                kind="education",
+                position=0,
+                payload_json=json.dumps({"school": "三江学院", "major": "视觉传达设计"}, ensure_ascii=False),
+                source_type="manual",
+                confidence=1.0,
+                confirmed=True,
+            )
+            second = ProfileCollectionItem(
+                kind="education",
+                position=1,
+                payload_json=json.dumps({"school": "第二学校", "major": "设计"}, ensure_ascii=False),
+                source_type="manual",
+                confidence=1.0,
+                confirmed=True,
+            )
+            session.add_all([first, second])
+            session.commit()
+
+            stored = session.scalars(
+                select(ProfileCollectionItem)
+                .where(ProfileCollectionItem.kind == "education")
+                .order_by(ProfileCollectionItem.position, ProfileCollectionItem.id)
+            ).all()
+
+            assert [item.id for item in stored] == [first.id, second.id]
+            assert [item.position for item in stored] == [0, 1]
+            assert first.id != second.id
+
+            revision = ProfileCollectionRevision(
+                item_id=first.id,
+                kind="education",
+                old_payload_json=None,
+                new_payload_json=first.payload_json,
+                old_position=None,
+                new_position=0,
+                source_type="manual",
+                confidence=1.0,
+                operation="CREATE",
+            )
+            session.add(revision)
+            session.commit()
+            assert session.scalar(select(ProfileCollectionRevision.item_id)) == first.id
+    finally:
+        engine.dispose()
