@@ -304,3 +304,18 @@ class ProfileDraftField(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ProfileCollectionDraft(Base):
+    __tablename__ = "profile_collection_drafts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    resume_version_id: Mapped[str] = mapped_column(
+        ForeignKey("resume_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    extractor_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
