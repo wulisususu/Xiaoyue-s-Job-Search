@@ -1,9 +1,20 @@
+import sys
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session
 
 from .config import AppSettings, get_settings
+
+
+def _core_root() -> Path:
+    """Where alembic.ini + alembic/ live: the source tree in dev, or the
+    PyInstaller bundle root (onedir `_internal/`, exposed as sys._MEIPASS)
+    in the packaged sidecar where they ship as datas."""
+    frozen_bundle_root = getattr(sys, "_MEIPASS", None)
+    if frozen_bundle_root:
+        return Path(frozen_bundle_root)
+    return Path(__file__).resolve().parents[1]
 
 
 def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
@@ -29,7 +40,7 @@ def get_engine(settings: AppSettings | None = None) -> Engine:
 def _alembic_config(settings: AppSettings):
     from alembic.config import Config
 
-    core_root = Path(__file__).resolve().parents[1]
+    core_root = _core_root()
     config = Config(core_root / "alembic.ini")
     config.set_main_option("script_location", str(core_root / "alembic"))
     config.attributes["db_url"] = f"sqlite:///{settings.database_path}"
