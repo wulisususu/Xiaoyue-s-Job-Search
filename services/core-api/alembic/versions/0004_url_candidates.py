@@ -1,7 +1,7 @@
 """url candidates for canonical URL promotion
 
-Revision ID: 0003_url_candidates
-Revises: 0002_application_sessions
+Revision ID: 0004_url_candidates
+Revises: 0003_application_sessions
 Create Date: 2026-09-17
 """
 from __future__ import annotations
@@ -9,16 +9,13 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0003_url_candidates"
-down_revision = "0002_application_sessions"
+revision = "0004_url_candidates"
+down_revision = "0003_application_sessions"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    inspector = sa.inspect(op.get_bind())
-    if "url_candidates" in inspector.get_table_names():
-        return
     op.create_table(
         "url_candidates",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),

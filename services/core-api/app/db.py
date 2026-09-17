@@ -1,10 +1,9 @@
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event, inspect
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session
 
 from .config import AppSettings, get_settings
-from .models import Base
 
 
 def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
@@ -44,28 +43,14 @@ def _run_migrations(settings: AppSettings) -> None:
 
 
 def init_db(settings: AppSettings | None = None) -> None:
-    """Prepare the database schema.
-
-    - Fresh database: create all tables from the models, then stamp the
-      alembic revision so future startups only run incremental migrations.
-    - Existing database: run `alembic upgrade head` so added columns land on
-      user data instead of silently diverging (create_all never ALTERs).
-    """
+    """Prepare the database schema. Alembic is the single schema
+    source-of-truth: every startup runs `upgrade head`, which builds the
+    full schema on an empty database (0001_initial_schema -> ...) and
+    applies incremental migrations to existing ones. create_all is NOT
+    part of the startup path anymore; test fixtures may still use it."""
     resolved = settings or get_settings()
     resolved.data_dir.mkdir(parents=True, exist_ok=True)
     resolved.vault_dir.mkdir(parents=True, exist_ok=True)
-    engine = get_engine(resolved)
-    try:
-        inspector = inspect(engine)
-        if not inspector.get_table_names():
-            Base.metadata.create_all(engine)
-            engine.dispose()
-            from alembic import command
-
-            command.stamp(_alembic_config(resolved), "head")
-            return
-    finally:
-        engine.dispose()
     _run_migrations(resolved)
 
 

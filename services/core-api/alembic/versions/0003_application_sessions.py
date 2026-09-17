@@ -1,7 +1,7 @@
 """application sessions
 
-Revision ID: 0002_application_sessions
-Revises: 0001_job_source_lifecycle
+Revision ID: 0003_application_sessions
+Revises: 0002_job_source_lifecycle
 Create Date: 2026-09-17
 """
 from __future__ import annotations
@@ -9,17 +9,13 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0002_application_sessions"
-down_revision = "0001_job_source_lifecycle"
+revision = "0003_application_sessions"
+down_revision = "0002_job_source_lifecycle"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # Idempotent: create_all-built databases already carry this table.
-    inspector = sa.inspect(op.get_bind())
-    if "application_sessions" in inspector.get_table_names():
-        return
     op.create_table(
         "application_sessions",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),

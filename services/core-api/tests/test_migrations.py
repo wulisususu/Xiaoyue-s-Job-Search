@@ -1,27 +1,41 @@
-"""Migration and schema-drift regression tests."""
+"""Migration chain as schema source-of-truth.
+
+The startup path is empty DB -> alembic upgrade head. These tests verify:
+- a fresh database built ONLY by migrations matches the ORM models
+  (drift guard in both directions)
+- a database from the first revision upgrades cleanly to head
+- the SQLite pragmas and FK cascades really apply
+"""
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
+from alembic import command
+from sqlalchemy import create_engine, inspect, select
+from sqlalchemy.orm import Session
 
 from app.config import AppSettings
-from app.db import get_engine, init_db
+from app.db import _alembic_config, get_engine, init_db
 
 
 def _settings(tmp_path) -> AppSettings:
     return AppSettings(data_dir=tmp_path / "data")
 
 
-def test_fresh_db_is_created_and_stamped(tmp_path):
+def test_fresh_db_is_built_by_migration_chain_and_is_idempotent(tmp_path):
     settings = _settings(tmp_path)
     init_db(settings)
     engine = get_engine(settings)
     try:
         tables = set(inspect(engine).get_table_names())
-        assert "job_sources" in tables
-        assert "alembic_version" in tables
-        cols = {c["name"] for c in inspect(engine).get_columns("job_sources")}
-        assert {"record_hash", "status"} <= cols
+        for expected in (
+            "app_settings", "companies", "company_aliases", "company_relations",
+            "company_sources", "jobs", "job_sources", "source_snapshots",
+            "source_sync_runs", "url_observations", "rediscovery_candidates",
+            "ai_provider_configs", "resume_versions", "profile_fields",
+            "profile_field_revisions", "profile_draft_fields",
+            "application_sessions", "url_candidates", "alembic_version",
+        ):
+            assert expected in tables, f"missing table {expected}"
     finally:
         engine.dispose()
 
@@ -29,35 +43,66 @@ def test_fresh_db_is_created_and_stamped(tmp_path):
     init_db(settings)
 
 
-def test_pre_lifecycle_db_is_upgraded_by_migrations(tmp_path):
+def test_migration_schema_matches_models(tmp_path):
+    """Schema source-of-truth guard: the migration-built schema and the ORM
+    metadata must agree on every table's column set. If a model change ships
+    without a migration (or vice versa), this fails."""
     settings = _settings(tmp_path)
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    db_file = settings.database_path
+    init_db(settings)
 
-    # Simulate an "old user" database created before the lifecycle columns
-    # existed: build current models, then strip the new columns.
-    bootstrap = create_engine(f"sqlite:///{db_file}")
+    migration_engine = get_engine(settings)
+    model_engine = create_engine("sqlite:///:memory:")
     from app.models import Base
 
-    Base.metadata.create_all(bootstrap)
-    with bootstrap.begin() as conn:
-        # The index did not exist on genuinely old databases; drop it so the
-        # simulated schema matches the pre-lifecycle shape exactly.
-        conn.execute(text("DROP INDEX IF EXISTS ix_job_sources_status"))
-        conn.execute(text("ALTER TABLE job_sources DROP COLUMN record_hash"))
-        conn.execute(text("ALTER TABLE job_sources DROP COLUMN status"))
-        conn.execute(text("DELETE FROM job_sources"))
-    bootstrap.dispose()
+    Base.metadata.create_all(model_engine)
+    try:
+        model_tables = {
+            name: {column.name for column in table.columns}
+            for name, table in Base.metadata.tables.items()
+        }
+        inspector = inspect(migration_engine)
+        for table, model_columns in model_tables.items():
+            migration_columns = {c["name"] for c in inspector.get_columns(table)}
+            missing_in_migration = model_columns - migration_columns
+            extra_in_migration = migration_columns - model_columns
+            assert not missing_in_migration, f"{table}: model columns missing from migrations: {missing_in_migration}"
+            assert not extra_in_migration, f"{table}: migration columns not in models: {extra_in_migration}"
+        migrated_tables = set(inspect(engine := migration_engine).get_table_names()) - {"alembic_version"}
+        assert migrated_tables == set(model_tables), (
+            f"table drift: models={set(model_tables)} migrations={migrated_tables}"
+        )
+    finally:
+        migration_engine.dispose()
+        model_engine.dispose()
+
+
+def test_first_revision_db_upgrades_to_head(tmp_path):
+    """A database from the INITIAL revision (before lifecycle columns,
+    application sessions and URL candidates existed) must upgrade to head."""
+    settings = _settings(tmp_path)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build a genuine historical database: only the first revision.
+    command.upgrade(_alembic_config(settings), "0001_initial_schema")
+
+    db_file = settings.database_path
+    engine = create_engine(f"sqlite:///{db_file}")
+    job_source_columns = {c["name"] for c in inspect(engine).get_columns("job_sources")}
+    tables = set(inspect(engine).get_table_names())
+    assert "record_hash" not in job_source_columns
+    assert "status" not in job_source_columns
+    assert "application_sessions" not in tables
+    assert "url_candidates" not in tables
+    engine.dispose()
 
     init_db(settings)
 
     engine = get_engine(settings)
     try:
-        cols = {c["name"] for c in inspect(engine).get_columns("job_sources")}
-        assert {"record_hash", "status"} <= cols
-        # Foreign keys really enforced on the running connection.
-        fk_on = engine.connect().exec_driver_sql("PRAGMA foreign_keys").scalar()
-        assert fk_on == 1
+        job_source_columns = {c["name"] for c in inspect(engine).get_columns("job_sources")}
+        assert {"record_hash", "status"} <= job_source_columns
+        assert "application_sessions" in set(inspect(engine).get_table_names())
+        assert "url_candidates" in set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
 
@@ -80,17 +125,15 @@ def test_foreign_key_cascade_actually_deletes(tmp_path):
     settings = _settings(tmp_path)
     init_db(settings)
     engine = get_engine(settings)
-    from sqlalchemy import select
-    from sqlalchemy.orm import Session
 
-    from app.models import Company, JobSource
+    from app.models import Company, Job, JobSource
 
     try:
         with Session(engine) as session:
             company = Company(name="测试集团", normalized_name="测试集团", ownership="central_soe")
             session.add(company)
             session.flush()
-            job = __import__("app.models", fromlist=["Job"]).Job(
+            job = Job(
                 id="job-cascade", company_id=company.id, title="岗位", location="", industry="",
                 recruitment_batch="", deadline_text="", apply_url="", canonical_url="",
                 status="DISCOVERED_NO_URL", fingerprint="fp-cascade",
@@ -104,6 +147,6 @@ def test_foreign_key_cascade_actually_deletes(tmp_path):
             session.delete(company)
             session.commit()
             assert session.scalar(select(JobSource.id)) is None
-            assert session.get(__import__("app.models", fromlist=["Company"]).Company, company_id) is None
+            assert session.get(Company, company_id) is None
     finally:
         engine.dispose()
