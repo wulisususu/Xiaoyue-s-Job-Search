@@ -34,10 +34,33 @@
 .profile-field-control input, .profile-field-control textarea { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid #dbe2ec; border-radius: 9px; background: white; color: #172033; resize: vertical; }
 .profile-field-control input:focus, .profile-field-control textarea:focus { outline: 2px solid rgba(23,32,51,.12); border-color: #aeb8c8; }
 .profile-field-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; color: #8b96a7; font-size: 10px; }
+
+.profile-structured-block { margin-top: 24px; }
+.profile-block-heading { margin: 0 0 13px; }
+.profile-block-heading .eyebrow { margin-bottom: 5px; }
+.profile-block-heading h2 { margin: 0 0 5px; font-size: 19px; }
+.profile-block-heading > p:last-child { margin: 0; color: #758198; font-size: 12px; line-height: 1.65; }
+.profile-collection-heading { align-items: center; }
+.profile-collection-heading-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.profile-collection-list { display: grid; gap: 12px; margin-top: 14px; }
+.profile-collection-card { padding: 16px; border: 1px solid #e7ebf1; border-radius: 13px; background: #fafbfd; }
+.profile-collection-card-new { border-style: dashed; background: #f8fafc; }
+.profile-collection-card-heading { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+.profile-collection-card-heading h3 { margin: 0 0 7px; font-size: 14px; }
+.profile-collection-id { color: #9aa4b5; font-size: 10px; font-variant-numeric: tabular-nums; }
+.profile-collection-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.profile-collection-control { min-width: 0; }
+.profile-collection-control > span { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; color: #536078; font-size: 12px; font-weight: 750; }
+.profile-collection-control > span em { padding: 2px 5px; border-radius: 999px; background: #f4f0ff; color: #7057b8; font-size: 9px; font-style: normal; font-weight: 750; }
+.profile-collection-control input, .profile-collection-control textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px 11px; border: 1px solid #dbe2ec; border-radius: 9px; background: white; color: #172033; resize: vertical; }
+.profile-collection-control input:focus, .profile-collection-control textarea:focus { outline: 2px solid rgba(23,32,51,.12); border-color: #aeb8c8; }
+.profile-collection-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
 @media (max-width: 1120px) {
   .profile-field-row { grid-template-columns: 1fr auto; }
   .profile-field-meta { grid-column: 1; grid-row: 2; }
   .profile-field-row > button { grid-column: 2; grid-row: 1 / span 2; }
   .profile-draft-card { flex-direction: column; }
   .profile-draft-actions { justify-content: flex-start; }
+  .profile-collection-fields { grid-template-columns: 1fr; }
 }
