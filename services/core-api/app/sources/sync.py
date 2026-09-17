@@ -78,6 +78,68 @@ def _result(source_name: str, status: str, content_hash: str | None, summary: Im
     )
 
 
+SUSPICIOUS_SHRINK_RATIO = 0.5
+
+
+def _last_run(session: Session, source_name: str) -> SourceSyncRun | None:
+    return session.scalar(
+        select(SourceSyncRun)
+        .where(SourceSyncRun.source_name == source_name)
+        .order_by(SourceSyncRun.finished_at.desc(), SourceSyncRun.id.desc())
+        .limit(1)
+    )
+
+
+def _last_known_good_count(session: Session, source_name: str) -> int:
+    run = session.scalar(
+        select(SourceSyncRun)
+        .where(
+            SourceSyncRun.source_name == source_name,
+            SourceSyncRun.status.in_(["SUCCESS", "UNCHANGED"]),
+        )
+        .order_by(SourceSyncRun.finished_at.desc(), SourceSyncRun.id.desc())
+        .limit(1)
+    )
+    return int(run.items_seen) if run is not None and run.items_seen else 0
+
+
+def _completeness_assessment(session: Session, records: list, declared_count) -> tuple[bool, str]:
+    """Source completeness gate (mass-tombstone guard).
+
+    A feed that (a) declares a count contradicting its own record list, or
+    (b) suddenly carries less than half of the last known-good volume, is
+    treated as suspicious. Suspicious feeds are imported (the records that
+    ARE present are individually valid) but STALE reconciliation is skipped,
+    so one bad pull can never tombstone the whole library. Only after a
+    second consecutive pull with the same reduced volume do we accept the
+    shrink as the new normal and let reconciliation run.
+    """
+    reasons: list[str] = []
+    if isinstance(declared_count, int) and declared_count != len(records):
+        reasons.append(f"declared count {declared_count} != {len(records)} records")
+    known_good = _last_known_good_count(session, "tencent-sheet")
+    if known_good > 0 and len(records) < known_good * SUSPICIOUS_SHRINK_RATIO:
+        reasons.append(f"{len(records)} records < 50% of last known-good {known_good}")
+    suspicious = bool(reasons)
+    return suspicious, "; ".join(reasons)
+
+
+def _quarantine_run(session: Session, source_name: str, content_hash: str, raw: bytes, payload: dict, summary: ImportSummary | None, reason: str) -> SyncResult:
+    run = record_sync_success(
+        session,
+        source_name,
+        content_hash,
+        raw.decode("utf-8"),
+        remote_version=str(payload.get("updated") or "") or None,
+        items_seen=len(payload.get("jobs") or []),
+        items_created=summary.jobs_created if summary else 0,
+    )
+    run.status = "QUARANTINED"
+    run.error = f"completeness gate: {reason}"[:4000]
+    session.commit()
+    return _result(source_name, "QUARANTINED", content_hash, summary, error=run.error)
+
+
 def sync_tencent_source(session: Session, payload_loader: PayloadLoader | None = None) -> SyncResult:
     source_name = "tencent-sheet"
     loader = payload_loader or fetch_tencent_payload
@@ -85,7 +147,35 @@ def sync_tencent_source(session: Session, payload_loader: PayloadLoader | None =
         payload = loader()
         raw = _json_payload_bytes(payload)
         content_hash = _hash_bytes(raw)
+        records = payload.get("jobs") or []
+        suspicious, reason = _completeness_assessment(session, records, payload.get("count"))
+
         if _snapshot_exists(session, source_name, content_hash):
+            if suspicious:
+                last_run = _last_run(session, source_name)
+                confirmed = (
+                    last_run is not None
+                    and last_run.status == "QUARANTINED"
+                    and last_run.items_seen == len(records)
+                )
+                if not confirmed:
+                    # Same feed as before AND suspicious: record the quarantine
+                    # but do NOT import or reconcile anything.
+                    return _quarantine_run(session, source_name, content_hash, raw, payload, None, reason)
+                # Shrink confirmed by a second identical pull: force the import
+                # so stale reconciliation finally runs against the new normal.
+                summary = import_xiaozhao_payload(session, payload, source_name=source_name, reconcile_stale=True)
+                run = record_sync_success(
+                    session,
+                    source_name,
+                    content_hash,
+                    raw.decode("utf-8"),
+                    remote_version=str(payload.get("updated") or "") or None,
+                    items_seen=summary.records_seen,
+                    items_created=summary.jobs_created,
+                )
+                return _result(source_name, run.status, content_hash, summary)
+
             run = record_sync_success(
                 session,
                 source_name,
@@ -96,7 +186,9 @@ def sync_tencent_source(session: Session, payload_loader: PayloadLoader | None =
             )
             return _result(source_name, run.status, content_hash)
 
-        summary = import_xiaozhao_payload(session, payload, source_name=source_name)
+        summary = import_xiaozhao_payload(
+            session, payload, source_name=source_name, reconcile_stale=not suspicious
+        )
         run = record_sync_success(
             session,
             source_name,
@@ -106,6 +198,15 @@ def sync_tencent_source(session: Session, payload_loader: PayloadLoader | None =
             items_seen=summary.records_seen,
             items_created=summary.jobs_created,
         )
+        if suspicious:
+            # Records present in the feed are kept, but a suspiciously
+            # shrunk feed never gets to tombstone the rest of the library.
+            # Mutate THIS run (do not append a second one) so the shrunken
+            # count can never masquerade as a known-good volume.
+            run.status = "QUARANTINED"
+            run.error = f"completeness gate: {reason}"[:4000]
+            session.commit()
+            return _result(source_name, "QUARANTINED", content_hash, summary, error=run.error)
         return _result(source_name, run.status, content_hash, summary)
     except Exception as exc:
         session.rollback()

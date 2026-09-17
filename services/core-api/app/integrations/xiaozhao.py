@@ -112,7 +112,13 @@ def _stale_unseen_sources(session: Session, source_name: str, seen_ids: set[int]
     return sources_staled, jobs_staled
 
 
-def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = "xiaozhao-radar") -> ImportSummary:
+def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = "xiaozhao-radar", reconcile_stale: bool = True) -> ImportSummary:
+    """Import a full upstream payload.
+
+    reconcile_stale=False is used by the completeness gate: a suspiciously
+    shrunk feed still updates the records it carries but must NOT mark the
+    absent ones STALE (mass-tombstone guard).
+    """
     updated = str(payload.get("updated") or "") or None
     records = payload.get("jobs") or []
     summary = ImportSummary()
@@ -189,7 +195,8 @@ def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = 
             source.source_url = url or source.source_url
         seen_source_ids.add(source.id)
 
-    summary.sources_staled, summary.jobs_staled = _stale_unseen_sources(session, source_name, seen_source_ids)
+    if reconcile_stale:
+        summary.sources_staled, summary.jobs_staled = _stale_unseen_sources(session, source_name, seen_source_ids)
     session.commit()
     return summary
 

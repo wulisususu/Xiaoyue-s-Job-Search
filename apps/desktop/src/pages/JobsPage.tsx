@@ -62,6 +62,7 @@ const sourceStateLabels: Record<string, string> = {
   SUCCESS: '正常',
   UNCHANGED: '已是最新',
   FAILED: '同步失败',
+  QUARANTINED: '数据量异常（已隔离）',
 };
 
 const PAGE_SIZE = 50;
