@@ -1,17 +1,6 @@
 from __future__ import annotations
 
 import json
-
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
-
-from ..config import get_settings
-from ..db import get_engine
-from ..models import ProfileDraftField, ResumeVersion
-from ..profile.registry import get_field_definition
-from ..profile.service import create_resume_drafts
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -21,17 +10,17 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import ProfileDraftField, ResumeVersion
+from ..models import ProfileCollectionDraft, ProfileDraftField, ResumeVersion
 from ..profile.registry import get_field_definition
 from ..profile.service import create_resume_drafts
 from ..resumes.vault import (
+    InvalidResumeError,
+    ResumeTooLargeError,
+    UnsupportedResumeTypeError,
     append_upload_chunk,
     discard_upload_spool,
     finalize_streamed_upload,
     open_upload_spool,
-    InvalidResumeError,
-    ResumeTooLargeError,
-    UnsupportedResumeTypeError,
 )
 
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
@@ -75,7 +64,7 @@ class ResumeDraftRead(BaseModel):
 
 
 def _pending_draft_count(session: Session, resume_id: str) -> int:
-    return int(
+    scalar_count = int(
         session.scalar(
             select(func.count(ProfileDraftField.id)).where(
                 ProfileDraftField.resume_version_id == resume_id,
@@ -84,6 +73,16 @@ def _pending_draft_count(session: Session, resume_id: str) -> int:
         )
         or 0
     )
+    collection_count = int(
+        session.scalar(
+            select(func.count(ProfileCollectionDraft.id)).where(
+                ProfileCollectionDraft.resume_version_id == resume_id,
+                ProfileCollectionDraft.status == "PENDING",
+            )
+        )
+        or 0
+    )
+    return scalar_count + collection_count
 
 
 def _resume_read(session: Session, resume: ResumeVersion) -> ResumeRead:
