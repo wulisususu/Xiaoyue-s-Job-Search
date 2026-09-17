@@ -1,47 +1,58 @@
+"""OpenAI-compatible implementation of the unified extraction contract.
+
+Any endpoint that speaks the ``/chat/completions`` dialect (OpenAI, DeepSeek,
+Qwen, ...) works here by changing ``AIProviderConfig`` only; nothing in the
+business layer changes when the endpoint or model is swapped.
+"""
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
 
 import httpx
 
 from ..models import AIProviderConfig
-from ..profile.collections import COLLECTION_REGISTRY, CollectionDefinition, validate_collection_payload
+from ..profile.collections import (
+    COLLECTION_REGISTRY,
+    CollectionDefinition,
+    validate_collection_payload,
+)
+from ..profile.extraction import (
+    CollectionDraftCandidate,
+    DraftCandidate,
+    ExtractionMetadata,
+    ProfileExtractionBundle,
+)
 from ..profile.registry import FIELD_REGISTRY, FieldDefinition
+from .errors import (
+    ProviderError,
+    ProviderInputError,
+    ProviderRequestError,
+    ProviderResponseError,
+    ProviderTimeoutError,
+)
 from .provider import chat_completions_url
 
+__all__ = [
+    "MAX_INPUT_CHARS",
+    "MAX_OUTPUT_CHARS",
+    "OPENAI_COMPATIBLE_PROMPT_VERSION",
+    "OPENAI_COMPATIBLE_PROVIDER_ID",
+    "OPENAI_COMPATIBLE_SCHEMA_VERSION",
+    "OpenAICompatibleExtractionProvider",
+    "ProviderError",
+    "ProviderInputError",
+    "ProviderRequestError",
+    "ProviderResponseError",
+    "ProviderTimeoutError",
+]
 
-@dataclass(frozen=True, slots=True)
-class RawAICandidate:
-    field_key: str
-    value: object
-    confidence: float
+OPENAI_COMPATIBLE_PROVIDER_ID = "openai_compatible"
+OPENAI_COMPATIBLE_PROMPT_VERSION = "registry-prompt-v2"
+OPENAI_COMPATIBLE_SCHEMA_VERSION = "bundle-v1"
 
-
-@dataclass(frozen=True, slots=True)
-class RawAICollectionCandidate:
-    kind: str
-    payload: dict[str, object]
-    confidence: float
-
-
-@dataclass(frozen=True, slots=True)
-class RawAIExtractionBundle:
-    fields: list[RawAICandidate]
-    collections: list[RawAICollectionCandidate]
-
-
-class ProviderRequestError(RuntimeError):
-    pass
-
-
-class ProviderTimeoutError(RuntimeError):
-    pass
-
-
-class ProviderResponseError(RuntimeError):
-    pass
+MAX_INPUT_CHARS = 200_000
+MAX_OUTPUT_CHARS = 200_000
 
 
 def _registry_prompt(
@@ -169,49 +180,59 @@ def _strip_json_fence(content: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _parse_confidence(value: object, *, candidate_type: str) -> float:
+def _valid_confidence(value: object) -> float | None:
+    """Per-item policy: invalid confidence drops the candidate, never the bundle."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ProviderResponseError(f"AI provider {candidate_type} confidence must be numeric")
+        return None
     confidence = float(value)
     if not math.isfinite(confidence) or confidence < 0 or confidence > 1:
-        raise ProviderResponseError(f"AI provider {candidate_type} confidence must be between 0 and 1")
+        return None
     return confidence
 
 
-def _parse_candidates(payload: object) -> list[RawAICandidate]:
+def _shape_matches_definition(value: object, definition: FieldDefinition) -> bool:
+    if definition.multiple:
+        return isinstance(value, list) and all(isinstance(item, str) for item in value)
+    return isinstance(value, str)
+
+
+def _parse_candidates(
+    payload: object,
+    registry: dict[str, FieldDefinition],
+) -> list[DraftCandidate]:
     if not isinstance(payload, dict) or "candidates" not in payload:
         raise ProviderResponseError("AI provider returned an invalid candidate payload")
     candidates = payload["candidates"]
     if not isinstance(candidates, list):
         raise ProviderResponseError("AI provider returned an invalid candidate list")
 
-    parsed: list[RawAICandidate] = []
+    parsed: list[DraftCandidate] = []
     for candidate in candidates:
+        # Partial-validity policy: structurally invalid or unknown scalar
+        # candidates are dropped one by one; the valid remainder survives.
         if not isinstance(candidate, dict):
-            raise ProviderResponseError("AI provider returned an invalid candidate")
+            continue
         field_key = candidate.get("field_key")
         value = candidate.get("value")
-        confidence = candidate.get("confidence")
-
-        if not isinstance(field_key, str):
-            raise ProviderResponseError("AI provider candidate field_key must be a string")
-        if not (
-            isinstance(value, str)
-            or (isinstance(value, list) and all(isinstance(item, str) for item in value))
-        ):
-            raise ProviderResponseError("AI provider candidate value must be a string or list of strings")
-
+        confidence = _valid_confidence(candidate.get("confidence"))
+        definition = registry.get(field_key) if isinstance(field_key, str) else None
+        if definition is None or confidence is None:
+            continue
+        if not _shape_matches_definition(value, definition):
+            continue
         parsed.append(
-            RawAICandidate(
+            DraftCandidate(
                 field_key=field_key,
                 value=value,
-                confidence=_parse_confidence(confidence, candidate_type="candidate"),
+                value_type=definition.value_type,
+                confidence=confidence,
+                extractor_name=OPENAI_COMPATIBLE_PROVIDER_ID,
             )
         )
     return parsed
 
 
-def _parse_collection_candidates(payload: object) -> list[RawAICollectionCandidate]:
+def _parse_collection_candidates(payload: object) -> list[CollectionDraftCandidate]:
     if not isinstance(payload, dict):
         raise ProviderResponseError("AI provider returned an invalid candidate payload")
     # Tolerate providers that still return the legacy scalar-only shape when
@@ -221,60 +242,70 @@ def _parse_collection_candidates(payload: object) -> list[RawAICollectionCandida
     if not isinstance(collections, list):
         raise ProviderResponseError("AI provider returned an invalid collection candidate list")
 
-    parsed: list[RawAICollectionCandidate] = []
+    parsed: list[CollectionDraftCandidate] = []
     for candidate in collections:
+        # Partial-validity policy: invalid kind/payload/confidence rejects
+        # only that item; valid items survive the response.
         if not isinstance(candidate, dict):
-            raise ProviderResponseError("AI provider returned an invalid collection candidate")
+            continue
         kind = candidate.get("kind")
         raw_payload = candidate.get("payload")
-        confidence = candidate.get("confidence")
-        if not isinstance(kind, str):
-            raise ProviderResponseError("AI provider collection candidate kind must be a string")
-        if not isinstance(raw_payload, dict):
-            raise ProviderResponseError("AI provider collection candidate payload must be an object")
+        confidence = _valid_confidence(candidate.get("confidence"))
+        if not isinstance(kind, str) or not isinstance(raw_payload, dict) or confidence is None:
+            continue
         try:
             normalized_payload = validate_collection_payload(kind, raw_payload)
-        except (KeyError, ValueError) as exc:
-            raise ProviderResponseError(f"AI provider collection candidate is invalid: {exc}") from exc
+        except (KeyError, ValueError):
+            continue
         parsed.append(
-            RawAICollectionCandidate(
+            CollectionDraftCandidate(
                 kind=kind,
                 payload=normalized_payload,
-                confidence=_parse_confidence(confidence, candidate_type="collection candidate"),
+                confidence=confidence,
+                extractor_name=OPENAI_COMPATIBLE_PROVIDER_ID,
             )
         )
     return parsed
 
 
-def _parse_extraction_bundle(payload: object) -> RawAIExtractionBundle:
-    return RawAIExtractionBundle(
-        fields=_parse_candidates(payload),
-        collections=_parse_collection_candidates(payload),
-    )
+class OpenAICompatibleExtractionProvider:
+    """Unified-contract provider backed by an OpenAI-compatible endpoint."""
 
-
-class OpenAICompatibleClient:
-    def __init__(self, *, transport: httpx.BaseTransport | None = None):
-        self._transport = transport
-
-    def extract_profile_candidates(
+    def __init__(
         self,
         config: AIProviderConfig,
         api_key: str,
-        resume_text: str,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        if api_key is None or not api_key.strip():
+            raise ValueError("AI provider API key is required")
+        self._config = config
+        self._api_key = api_key
+        self._transport = transport
+
+    def extract(
+        self,
+        text: str,
         registry: dict[str, FieldDefinition] = FIELD_REGISTRY,
         collection_registry: dict[str, CollectionDefinition] = COLLECTION_REGISTRY,
-    ) -> RawAIExtractionBundle:
+    ) -> ProfileExtractionBundle:
+        resume_text = text or ""
+        if len(resume_text) > MAX_INPUT_CHARS:
+            raise ProviderInputError(
+                f"resume text exceeds the {MAX_INPUT_CHARS}-character provider input limit"
+            )
+
         messages = [
             {"role": "system", "content": _registry_prompt(registry, collection_registry)},
             {"role": "user", "content": resume_text},
         ]
         body: dict[str, object] = {
-            "model": config.text_model,
-            "temperature": config.temperature,
+            "model": self._config.text_model,
+            "temperature": self._config.temperature,
             "messages": messages,
         }
-        if config.supports_json_schema:
+        if self._config.supports_json_schema:
             body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -287,13 +318,13 @@ class OpenAICompatibleClient:
         try:
             with httpx.Client(
                 transport=self._transport,
-                timeout=float(config.timeout_seconds),
+                timeout=float(self._config.timeout_seconds),
                 headers={
-                    "Authorization": f"Bearer {api_key}",
+                    "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
                 },
             ) as client:
-                response = client.post(chat_completions_url(config.base_url), json=body)
+                response = client.post(chat_completions_url(self._config.base_url), json=body)
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError("AI provider request timed out") from exc
         except httpx.RequestError as exc:
@@ -318,24 +349,23 @@ class OpenAICompatibleClient:
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise ProviderResponseError("AI provider response has no completion content")
+        if len(content) > MAX_OUTPUT_CHARS:
+            raise ProviderResponseError(
+                f"AI provider completion exceeds the {MAX_OUTPUT_CHARS}-character output limit"
+            )
 
         try:
             candidate_payload = json.loads(_strip_json_fence(content))
         except json.JSONDecodeError as exc:
             raise ProviderResponseError("AI provider completion content is not valid JSON") from exc
-        return _parse_extraction_bundle(candidate_payload)
 
-    def extract_candidates(
-        self,
-        config: AIProviderConfig,
-        api_key: str,
-        resume_text: str,
-        registry: dict[str, FieldDefinition] = FIELD_REGISTRY,
-    ) -> list[RawAICandidate]:
-        """Backward-compatible scalar view of the richer extraction bundle."""
-        return self.extract_profile_candidates(
-            config,
-            api_key,
-            resume_text,
-            registry=registry,
-        ).fields
+        return ProfileExtractionBundle(
+            fields=_parse_candidates(candidate_payload, registry),
+            collections=_parse_collection_candidates(candidate_payload),
+            metadata=ExtractionMetadata(
+                provider=OPENAI_COMPATIBLE_PROVIDER_ID,
+                model=self._config.text_model,
+                prompt_version=OPENAI_COMPATIBLE_PROMPT_VERSION,
+                schema_version=OPENAI_COMPATIBLE_SCHEMA_VERSION,
+            ),
+        )
