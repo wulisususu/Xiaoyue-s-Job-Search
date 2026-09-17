@@ -259,6 +259,39 @@ class ProfileFieldRevision(Base):
     changed_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
 
 
+class ProfileCollectionItem(Base):
+    __tablename__ = "profile_collection_items"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+    __table_args__ = (Index("ix_profile_collection_items_kind_position", "kind", "position", "id"),)
+
+
+class ProfileCollectionRevision(Base):
+    __tablename__ = "profile_collection_revisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("profile_collection_items.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    old_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    old_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    operation: Mapped[str] = mapped_column(String(20), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+
+
 class ProfileDraftField(Base):
     __tablename__ = "profile_draft_fields"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
