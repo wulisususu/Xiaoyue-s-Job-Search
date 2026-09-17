@@ -9,6 +9,7 @@ from .config import get_settings
 from .db import get_engine, init_db
 from .resumes.vault import reconcile_vault
 from .routes.ai import router as ai_router
+from .routes.applications import router as applications_router
 from .routes.health import router as health_router
 from .routes.jobs import router as jobs_router
 from .routes.profile import router as profile_router
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
             return await call_next(request)
 
     application.include_router(ai_router)
+    application.include_router(applications_router)
     application.include_router(health_router)
     application.include_router(jobs_router)
     application.include_router(profile_router)

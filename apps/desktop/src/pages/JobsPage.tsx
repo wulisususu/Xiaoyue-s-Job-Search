@@ -14,6 +14,7 @@ import {
   syncWorkfindSource,
   verifyJob,
 } from '../api/jobsClient';
+import { startApplication } from '../api/applicationsClient';
 
 const emptyStats: JobStats = {
   total: 0,
@@ -126,6 +127,26 @@ export function JobsPage() {
     }
   }
 
+  async function beginApplication(job: RadarJob) {
+    const url = job.canonical_url || job.apply_url;
+    if (!url) return;
+    setActionKey(`apply-${job.id}`);
+    setActionMessage('');
+    try {
+      // Record the manual application session first; if the API is down we
+      // still open the URL but surface the failure honestly.
+      const record = await startApplication(job.id);
+      window.open(record.opened_url || url, '_blank', 'noreferrer');
+      setActionMessage('已记录申请会话，正在打开投递入口');
+      refresh();
+    } catch (reason: unknown) {
+      setActionMessage(reason instanceof Error ? reason.message : '申请会话记录失败');
+      window.open(url, '_blank', 'noreferrer');
+    } finally {
+      setActionKey('');
+    }
+  }
+
   return (
     <section className="page">
       <header className="page-header">
@@ -223,7 +244,7 @@ export function JobsPage() {
                 <div className="job-actions">
                   {job.apply_url ? <a href={job.apply_url} target="_blank" rel="noreferrer" className="secondary-button">查看原始入口</a> : <span className="muted-action">暂无入口</span>}
                   {canVerify && <button className="secondary-button" type="button" disabled={Boolean(actionKey)} onClick={() => runAction(`verify-${job.id}`, () => verifyJob(job.id), '入口验证完成')}>{actionKey === `verify-${job.id}` ? '验证中…' : '验证入口'}</button>}
-                  <button className="primary-button" type="button" disabled={!verified}>开始申请</button>
+                  <button className="primary-button" type="button" disabled={!verified} onClick={() => beginApplication(job)}>{actionKey === `apply-${job.id}` ? '打开中…' : '开始申请'}</button>
                 </div>
               </article>
             );

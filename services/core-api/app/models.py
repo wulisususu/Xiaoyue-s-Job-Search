@@ -125,6 +125,24 @@ class SourceSyncRun(Base):
     finished_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class ApplicationSession(Base):
+    """One user-driven application attempt for a job.
+
+    channel='manual' is the pre-Browser-Agent flow: the user clicks 开始申请,
+    we open the verified entry URL and track the timeline by hand. The future
+    Browser Agent writes the same table with channel='browser_agent'.
+    """
+
+    __tablename__ = "application_sessions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="OPENED", index=True)
+    channel: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", index=True)
+    opened_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    opened_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
 class UrlObservation(Base):
     __tablename__ = "url_observations"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
