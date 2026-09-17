@@ -9,7 +9,18 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import ProfileDraftField, ProfileField, ProfileFieldRevision, ResumeVersion
+from ..models import ProfileCollectionItem, ProfileDraftField, ProfileField, ProfileFieldRevision, ResumeVersion
+from ..profile.collection_service import (
+    DuplicateProfileCollectionValueError,
+    ProfileCollectionItemNotFoundError,
+    ProfileCollectionOrderError,
+    create_collection_item,
+    delete_collection_item,
+    list_collection_items,
+    reorder_collection_items,
+    update_collection_item,
+)
+from ..profile.collections import COLLECTION_REGISTRY, get_collection_definition
 from ..profile.registry import FIELD_REGISTRY, get_field_definition
 from ..profile.service import (
     ProfileDraftAlreadyReviewedError,
@@ -80,6 +91,45 @@ class ProfileRevisionRead(BaseModel):
     changed_at: str
 
 
+class ProfileCollectionFieldDefinitionRead(BaseModel):
+    key: str
+    label: str
+    value_type: str
+    required: bool
+    multiple: bool
+
+
+class ProfileCollectionDefinitionRead(BaseModel):
+    kind: str
+    label: str
+    fields: list[ProfileCollectionFieldDefinitionRead]
+
+
+class ProfileCollectionWrite(BaseModel):
+    payload: dict[str, object]
+
+
+class ProfileCollectionOrderWrite(BaseModel):
+    item_ids: list[int]
+
+
+class ProfileCollectionItemRead(BaseModel):
+    id: int
+    kind: str
+    position: int
+    payload: dict[str, object]
+    source_type: str
+    source_ref: str | None = None
+    confidence: float | None = None
+    confirmed: bool
+    created_at: str
+    updated_at: str
+
+
+class ProfileCollectionDeleteRead(BaseModel):
+    deleted_id: int
+
+
 def _field_read(field: ProfileField) -> ProfileFieldRead:
     definition = get_field_definition(field.field_key)
     return ProfileFieldRead(
@@ -136,6 +186,43 @@ def _revision_read(revision: ProfileFieldRevision) -> ProfileRevisionRead:
         confirmed=revision.confirmed,
         changed_at=revision.changed_at.isoformat(),
     )
+
+
+def _collection_definition_read(kind: str) -> ProfileCollectionDefinitionRead:
+    definition = get_collection_definition(kind)
+    return ProfileCollectionDefinitionRead(
+        kind=definition.kind,
+        label=definition.label,
+        fields=[
+            ProfileCollectionFieldDefinitionRead(
+                key=field.key,
+                label=field.label,
+                value_type=field.value_type,
+                required=field.required,
+                multiple=field.multiple,
+            )
+            for field in definition.fields
+        ],
+    )
+
+
+def _collection_read(item: ProfileCollectionItem) -> ProfileCollectionItemRead:
+    return ProfileCollectionItemRead(
+        id=item.id,
+        kind=item.kind,
+        position=item.position,
+        payload=json.loads(item.payload_json),
+        source_type=item.source_type,
+        source_ref=item.source_ref,
+        confidence=item.confidence,
+        confirmed=item.confirmed,
+        created_at=item.created_at.isoformat(),
+        updated_at=item.updated_at.isoformat(),
+    )
+
+
+def _collection_validation_error(exc: KeyError | ValueError) -> HTTPException:
+    return HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/definitions", response_model=list[ProfileDefinitionRead])
@@ -237,5 +324,89 @@ def profile_history(field_key: str | None = None) -> list[ProfileRevisionRead]:
                 query.order_by(ProfileFieldRevision.changed_at.desc(), ProfileFieldRevision.id.desc())
             ).all()
             return [_revision_read(revision) for revision in revisions]
+    finally:
+        engine.dispose()
+
+
+@router.get("/collections/definitions", response_model=list[ProfileCollectionDefinitionRead])
+def list_profile_collection_definitions() -> list[ProfileCollectionDefinitionRead]:
+    return [_collection_definition_read(kind) for kind in COLLECTION_REGISTRY]
+
+
+@router.get("/collections/{kind}", response_model=list[ProfileCollectionItemRead])
+def get_profile_collection(kind: str) -> list[ProfileCollectionItemRead]:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                return [_collection_read(item) for item in list_collection_items(session, kind)]
+            except KeyError as exc:
+                raise _collection_validation_error(exc) from exc
+    finally:
+        engine.dispose()
+
+
+@router.post("/collections/{kind}", response_model=ProfileCollectionItemRead)
+def post_profile_collection_item(kind: str, body: ProfileCollectionWrite) -> ProfileCollectionItemRead:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                item = create_collection_item(session, kind, body.payload)
+                return _collection_read(item)
+            except DuplicateProfileCollectionValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except (KeyError, ValueError) as exc:
+                raise _collection_validation_error(exc) from exc
+    finally:
+        engine.dispose()
+
+
+@router.put("/collections/{kind}/order", response_model=list[ProfileCollectionItemRead])
+def put_profile_collection_order(kind: str, body: ProfileCollectionOrderWrite) -> list[ProfileCollectionItemRead]:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                items = reorder_collection_items(session, kind, body.item_ids)
+                return [_collection_read(item) for item in items]
+            except ProfileCollectionOrderError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except KeyError as exc:
+                raise _collection_validation_error(exc) from exc
+    finally:
+        engine.dispose()
+
+
+@router.put("/collections/{kind}/{item_id}", response_model=ProfileCollectionItemRead)
+def put_profile_collection_item(kind: str, item_id: int, body: ProfileCollectionWrite) -> ProfileCollectionItemRead:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                item = update_collection_item(session, kind, item_id, body.payload)
+                return _collection_read(item)
+            except ProfileCollectionItemNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except DuplicateProfileCollectionValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except (KeyError, ValueError) as exc:
+                raise _collection_validation_error(exc) from exc
+    finally:
+        engine.dispose()
+
+
+@router.delete("/collections/{kind}/{item_id}", response_model=ProfileCollectionDeleteRead)
+def remove_profile_collection_item(kind: str, item_id: int) -> ProfileCollectionDeleteRead:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            try:
+                deleted_id = delete_collection_item(session, kind, item_id)
+                return ProfileCollectionDeleteRead(deleted_id=deleted_id)
+            except ProfileCollectionItemNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except (KeyError, ValueError) as exc:
+                raise _collection_validation_error(exc) from exc
     finally:
         engine.dispose()
