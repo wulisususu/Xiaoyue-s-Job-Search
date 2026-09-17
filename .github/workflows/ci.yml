@@ -44,5 +44,7 @@ jobs:
         run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --no-deps
       - name: Cargo check (Rust shell compiles)
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Cargo test (Rust unit tests)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Desktop shell build (tauri build, full Rust link)
         run: npm run tauri:build --workspace apps/desktop
