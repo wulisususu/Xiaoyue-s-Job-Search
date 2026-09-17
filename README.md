@@ -201,13 +201,17 @@ Phase 3A 明确**没有**引入网络 AI、OCR 引擎、Browser Agent、API Key 
 - [x] Provider 边界：输入/输出长度上限、timeout、bad JSON / 空响应 / 网络 / HTTP 错误分类、部分非法候选单项丢弃
 - [x] 删除 `ProfileExtractor + provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨实现
 
+### 本地安全模型（两套互不重叠的策略）
+
+1. **本机 API 信任边界（session token）**：token 由 Tauri shell 每次启动用 OS CSPRNG 生成（BCryptGenRandom，256-bit hex），只存在于两侧进程内存与 `Authorization: Bearer` 头中，绝不落入 SQLite、日志或磁盘；`/api/*`（health 除外）强制校验 Bearer + loopback Host/Origin。新增任何 router（包括未来的 Browser Agent 高权限路由）天然被 middleware 覆盖——存在回归测试逐路由断言。前端所有 Core client 统一经 `coreRuntime()` + `authHeaders()` wrapper。
+2. **招聘 URL verifier SSRF guard**：core 主动出网抓取/验证招聘 URL 时走 pinned-IP 校验（resolve-once、逐地址校验、redirect 每跳重新 pin）。它与「本地 AI Provider 访问 localhost 出网」是两套独立安全策略，互不豁免。
+
 ## 当前状态与下一阶段
 
-Phase 3C 已落地统一 AI 提取契约（见上节）。剩余工作见 `doc/TODO.md`，重点包括：
+Phase 3C 已落地统一 AI 提取契约，session token 已硬化（OS CSPRNG + auth E2E + 全 client 统一 wrapper）。剩余工作见 `doc/TODO.md`，重点包括：
 
 1. Tauri sidecar 打包（PyInstaller onedir）与安装器构建；
-2. session token 改 CSPRNG 并补 auth E2E；
-3. Application CRM Phase 2、Dashboard 真实数据与设置页；
-4. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
+2. Application CRM Phase 2、Dashboard 真实数据与设置页；
+3. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
 
 Browser Agent 自动填表继续在 Profile/Provider 数据底座稳定后接入。
