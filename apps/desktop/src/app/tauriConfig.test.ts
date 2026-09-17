@@ -1,16 +1,13 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+
+import tauriConf from '../../src-tauri/tauri.conf.json';
 
 interface TauriConf {
   bundle: { active: boolean; targets: string[]; resources: Record<string, string> | string[] };
   app: { security: { csp: string } };
 }
 
-// vitest runs with cwd = apps/desktop; src-tauri lives next to it.
-const confPath = resolve(process.cwd(), 'src-tauri/tauri.conf.json');
-const conf: TauriConf = JSON.parse(readFileSync(confPath, 'utf-8'));
+const conf = tauriConf as unknown as TauriConf;
 
 describe('tauri.conf.json (packaging contract)', () => {
   it('bundles with NSIS and carries the PyInstaller onedir output', () => {
