@@ -42,13 +42,15 @@ jobs:
         run: npm run build --workspace apps/desktop
       - name: Validate Tauri Cargo metadata
         run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --no-deps
-      - name: Cargo check (Rust shell compiles)
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-      - name: Cargo test (Rust unit tests)
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # Any cargo build validates tauri.conf.json resources, so the sidecar
+      # dist must exist before cargo check/test run.
       - name: Build core sidecar (PyInstaller onedir)
         run: ./scripts/build-core.ps1
       - name: Smoke core sidecar exe (health + auth + migrations)
         run: ./scripts/smoke-core-exe.ps1
+      - name: Cargo check (Rust shell compiles)
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Cargo test (Rust unit tests)
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Desktop shell build (tauri build, full Rust link)
         run: npm run tauri:build --workspace apps/desktop
