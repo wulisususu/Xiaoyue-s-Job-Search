@@ -68,11 +68,12 @@ export interface SourceStatus {
 export interface SourceSyncResult {
   source_name: string;
   status: string;
-  version?: string | null;
   content_hash?: string | null;
-  items_seen?: number;
-  items_created?: number;
-  items_updated?: number;
+  records_seen: number;
+  companies_created: number;
+  jobs_created: number;
+  sources_created: number;
+  relations_created: number;
   error?: string | null;
 }
 
@@ -90,6 +91,8 @@ export interface VerificationBatchResult {
   checked: number;
   verified_open: number;
   rediscovery_required: number;
+  blocked: number;
+  requires_browser: number;
   failed: number;
 }
 

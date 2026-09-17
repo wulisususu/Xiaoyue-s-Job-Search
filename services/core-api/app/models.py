@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -79,6 +79,10 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     fingerprint: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
     source_updated_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Scheduler hint maintained after every verification: NULL means "never
+    # verified" (i.e. due). Lets verify_due_jobs select due jobs in ONE query
+    # instead of an N+1 scan over URL observations.
+    next_verification_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

@@ -12,11 +12,17 @@ from app.main import create_app
 def token_client(tmp_path, monkeypatch):
     monkeypatch.setenv("XIAOYUE_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("XIAOYUE_SESSION_TOKEN", "secret-launch-token")
-    return TestClient(create_app())
+    # Bind to the loopback host the sidecar middleware expects.
+    return TestClient(create_app(), base_url="http://127.0.0.1")
 
 
 def test_health_stays_open_for_sidecar_probe(token_client):
     assert token_client.get("/api/health").status_code == 200
+
+
+def test_api_rejects_disallowed_host(token_client):
+    response = token_client.get("/api/jobs/stats", headers={"Host": "evil.example.com:8765"})
+    assert response.status_code == 403
 
 
 def test_api_rejects_missing_or_wrong_token(token_client):

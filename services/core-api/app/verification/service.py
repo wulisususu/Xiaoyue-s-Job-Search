@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Job, UrlCandidate, UrlObservation
@@ -71,14 +71,23 @@ def _apply_result(session: Session, job: Job, result: VerificationResult) -> Non
         if result.final_url: job.canonical_url = result.final_url
     elif result.health in {"BROKEN", "STALE"}:
         job.status = "REDISCOVERY_REQUIRED"
-    elif result.health == "REQUIRES_BROWSER":
-        # Do not promote and do not penalize; a JS-capable agent must look.
+    elif result.health in {"ACCESS_BLOCKED", "LOGIN_REQUIRED", "REQUIRES_BROWSER"}:
+        # Transient / inconclusive: WAF, anti-bot, rate limiting or a JS
+        # shell say nothing about whether the job is closed. A VERIFIED_OPEN
+        # job keeps its verified status; the observation records the detail.
         pass
     elif job.status == "VERIFIED_OPEN":
         job.status = "DISCOVERED_URL_UNVERIFIED"
     if result.health != "VERIFIED_APPLY" and result.body:
         candidates = extract_rediscovery_candidates(result.final_url or checked_url, result.body)
         persist_rediscovery_candidates(session, job.id, candidates)
+    # Maintain the scheduler hint: next due time per the interval policy.
+    interval = next_verification_interval(
+        job.status,
+        job.deadline_text,
+        dt.datetime.now(dt.timezone.utc).date(),
+    )
+    job.next_verification_at = dt.datetime.now(dt.timezone.utc) + interval
 
 
 def verify_job(session: Session, job: Job, transport: Transport | None = None) -> VerificationResult:
@@ -95,16 +104,6 @@ def verify_job(session: Session, job: Job, transport: Transport | None = None) -
     return result
 
 
-def _is_due(session: Session, job: Job, now: dt.datetime) -> bool:
-    latest = session.scalar(select(UrlObservation).where(UrlObservation.job_id == job.id).order_by(UrlObservation.observed_at.desc()).limit(1))
-    if latest is None: return True
-    observed_at = latest.observed_at
-    if observed_at.tzinfo is None:
-        observed_at = observed_at.replace(tzinfo=dt.timezone.utc)
-    interval = next_verification_interval(job.status, job.deadline_text, now.date())
-    return observed_at + interval <= now
-
-
 def _domain_of(url: str) -> str:
     return (urlparse(url).hostname or "").lower()
 
@@ -118,13 +117,18 @@ def verify_due_jobs(session: Session, limit: int = 50, transport: Transport | No
     host is never hammered in parallel.
     """
     resolved_now = now or dt.datetime.now(dt.timezone.utc)
-    jobs = session.scalars(select(Job).where(Job.apply_url != "").order_by(Job.updated_at.desc())).all()
-    due: list[Job] = []
-    for job in jobs:
-        if len(due) >= limit:
-            break
-        if _is_due(session, job, resolved_now):
-            due.append(job)
+    # Single-query due selection: jobs.next_verification_at is maintained on
+    # every verification, so there is no per-job observation scan here.
+    # NULL next_verification_at = never verified = due.
+    due = session.scalars(
+        select(Job)
+        .where(
+            Job.apply_url != "",
+            or_(Job.next_verification_at.is_(None), Job.next_verification_at <= resolved_now),
+        )
+        .order_by(Job.updated_at.desc())
+        .limit(limit)
+    ).all()
 
     # Partition by hostname: each group runs serially in one worker.
     groups: dict[str, list[Job]] = defaultdict(list)

@@ -45,10 +45,21 @@ def create_app() -> FastAPI:
         # (or web pages probing localhost) cannot drive the API.
         expected = f"Bearer {settings.session_token}"
 
+        def _host_allowed(host: str | None) -> bool:
+            if not host:
+                return False
+            hostname = host.rsplit(":", 1)[0].strip("[]").lower()
+            return hostname in {"127.0.0.1", "localhost", "::1"}
+
         @application.middleware("http")
         async def _require_session_token(request, call_next):
             path = request.url.path
             if path.startswith("/api/") and path != "/api/health":
+                if not _host_allowed(request.headers.get("host")):
+                    return JSONResponse(status_code=403, content={"detail": "invalid host"})
+                origin = request.headers.get("origin")
+                if origin and origin not in {"http://localhost:1420", "http://127.0.0.1:1420", "tauri://localhost"}:
+                    return JSONResponse(status_code=403, content={"detail": "invalid origin"})
                 provided = request.headers.get("authorization", "")
                 if not hmac.compare_digest(provided, expected):
                     return JSONResponse(status_code=401, content={"detail": "invalid session token"})

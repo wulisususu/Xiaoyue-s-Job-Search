@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Callable
 
 from sqlalchemy import select
@@ -311,6 +312,19 @@ SOURCE_SYNC_INTERVALS = {
     "workfind-online": dt.timedelta(hours=24),
 }
 
+# Single-flight: one sync per source per process. Two concurrent
+# /api/sources/sync-due requests (multi-window, scheduler + agent) can no
+# longer both pass the interval check and pull/import at the same time.
+_SOURCE_LOCKS: dict[str, Lock] = {}
+_SOURCE_LOCKS_GUARD = Lock()
+
+
+def _source_lock(source_name: str) -> Lock:
+    with _SOURCE_LOCKS_GUARD:
+        if source_name not in _SOURCE_LOCKS:
+            _SOURCE_LOCKS[source_name] = Lock()
+        return _SOURCE_LOCKS[source_name]
+
 
 def _source_sync_due(session: Session, source_name: str, now: dt.datetime) -> bool:
     latest = session.scalar(
@@ -336,7 +350,13 @@ def sync_due_sources(
     resolved_now = now or dt.datetime.now(dt.timezone.utc)
     results: list[SyncResult] = []
     if _source_sync_due(session, "tencent-sheet", resolved_now):
-        results.append(sync_tencent_source(session))
+        with _source_lock("tencent-sheet"):
+            # Re-check under the lock: a concurrent request may have run the
+            # sync while we waited.
+            if _source_sync_due(session, "tencent-sheet", resolved_now):
+                results.append(sync_tencent_source(session))
     if _source_sync_due(session, "workfind-online", resolved_now):
-        results.append(sync_workfind_bundle(session, cache_dir=cache_dir))
+        with _source_lock("workfind-online"):
+            if _source_sync_due(session, "workfind-online", resolved_now):
+                results.append(sync_workfind_bundle(session, cache_dir=cache_dir))
     return results

@@ -22,7 +22,7 @@ npm install
 .\scripts\dev.ps1
 ```
 
-默认本地数据目录为 `%LOCALAPPDATA%\XiaoyueJobSearch`。可通过环境变量 `XIAOYUE_DATA_DIR` 覆盖。
+默认本地数据目录为 `~/.xiaoyue-job-search`（Windows 上即 `C:\Users\<user>\.xiaoyue-job-search`）。可通过环境变量 `XIAOYUE_DATA_DIR` 覆盖。
 
 ## 上游参考源码
 
@@ -192,14 +192,14 @@ Phase 3A 明确**没有**引入网络 AI、OCR 引擎、Browser Agent、API Key 
 - [x] Profile SSOT / Draft Review UI
 - [x] Windows CI 覆盖 Web / Core / Build / Tauri metadata
 
-## 下一阶段
+## 当前状态与下一阶段
 
-优先进入 **Phase 3B：AI Profile Extraction + Secure Provider Configuration**：
+Phase 3B 的基础设施已经落地：`routes/ai.py`（Secure Provider API）、`openai_compatible.py`（网络客户端）、keyring 密钥轮换与 `secret_ref` 隔离均已实现。剩余工作见 `doc/TODO.md`，重点包括：
 
-1. OpenAI-compatible Provider 配置：Provider Name、Base URL、reasoning/text model、vision model；
-2. API Key 进入 Windows / OS Credential Store，SQLite 只保存 `secret_ref`；
-3. 实现 `ProfileExtractionProvider` 的网络 AI 版本，把教育、经历、技能、奖项等语义信息生成 Draft；
-4. AI 仍然只能生成 Draft，不能直接写入 Profile SSOT；
-5. 再评估 OCR pipeline，使扫描型 PDF 能进入同一 Draft 审核流程。
+1. Profile SSOT 升级为结构化集合（Education[] / Experience[] / Project[]…），替代扁平字段与 summary 长文本；
+2. 统一两套 AI 抽象（`ProfileExtractor` vs `OpenAICompatibleClient`），冻结唯一 Provider Contract；
+3. AI 只能生成 Draft，不能直接写入 Profile SSOT；
+4. Tauri sidecar 打包（PyInstaller onedir）与安装器构建；
+5. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
 
 Browser Agent 自动填表继续在 Profile/Provider 数据底座稳定后接入。

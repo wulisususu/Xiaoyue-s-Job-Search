@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import os
 import tempfile
 import uuid
@@ -18,6 +17,10 @@ from ..models import ResumeVersion
 from .parsers import extract_resume_text
 
 MAX_RESUME_BYTES = 50 * 1024 * 1024
+# Zip-bomb guards for DOCX containers.
+MAX_ZIP_MEMBERS = 500
+MAX_ZIP_UNCOMPRESSED = 100 * 1024 * 1024
+MAX_ZIP_RATIO = 300
 
 
 class ResumeVaultError(ValueError):
@@ -48,41 +51,88 @@ def _safe_display_name(filename: str) -> str:
     return name or "resume"
 
 
-def _validate_pdf(data: bytes) -> None:
-    if not data.startswith(b"%PDF-"):
-        raise InvalidResumeError("Invalid PDF signature")
+def _validate_pdf_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        if handle.read(5) != b"%PDF-":
+            raise InvalidResumeError("Invalid PDF signature")
     try:
-        reader = pypdf.PdfReader(io.BytesIO(data))
+        reader = pypdf.PdfReader(str(path))
         _ = len(reader.pages)
     except Exception as exc:
         raise InvalidResumeError("PDF cannot be opened") from exc
 
 
-def _validate_docx(data: bytes) -> None:
-    if not data.startswith(b"PK"):
-        raise InvalidResumeError("Invalid DOCX container")
+def _validate_docx_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        if handle.read(2) != b"PK":
+            raise InvalidResumeError("Invalid DOCX container")
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names = set(archive.namelist())
+        with zipfile.ZipFile(path) as archive:
+            members = archive.infolist()
+            if len(members) > MAX_ZIP_MEMBERS:
+                raise InvalidResumeError("DOCX has too many ZIP members")
+            names = {info.filename for info in members}
             if "[Content_Types].xml" not in names or "word/document.xml" not in names:
                 raise InvalidResumeError("DOCX is missing required Word document members")
             if archive.testzip() is not None:
                 raise InvalidResumeError("DOCX ZIP container is corrupt")
-        docx.Document(io.BytesIO(data))
+            total_uncompressed = 0
+            total_compressed = 0
+            for info in members:
+                total_uncompressed += info.file_size
+                total_compressed += max(info.compress_size, 1)
+            if total_uncompressed > MAX_ZIP_UNCOMPRESSED:
+                raise InvalidResumeError("DOCX decompresses to an implausible size")
+            if total_compressed and total_uncompressed / total_compressed > MAX_ZIP_RATIO:
+                raise InvalidResumeError("DOCX compression ratio is implausible (zip bomb?)")
+        docx.Document(str(path))
     except InvalidResumeError:
         raise
     except Exception as exc:
         raise InvalidResumeError("DOCX cannot be opened") from exc
 
 
-def _validate_supported_content(ext: str, data: bytes) -> None:
+def validate_supported_content_file(ext: str, path: Path) -> None:
     if ext == ".pdf":
-        _validate_pdf(data)
+        _validate_pdf_file(path)
         return
     if ext == ".docx":
-        _validate_docx(data)
+        _validate_docx_file(path)
         return
     raise UnsupportedResumeTypeError(f"Unsupported resume format: {ext or 'unknown'}")
+
+
+def open_upload_spool(settings: AppSettings, filename: str) -> tuple[str, Path, "hashlib._Hash"]:
+    """Create a temp spool file for a streaming upload.
+
+    Returns (display_name, temp_path, hash). The caller streams chunks into
+    temp_path while updating the hash, then calls finalize_streamed_upload.
+    """
+    display_name = _safe_display_name(filename)
+    ext = Path(display_name).suffix.lower()
+    if ext not in _MIME_BY_EXT:
+        raise UnsupportedResumeTypeError("Only PDF and DOCX resumes are supported")
+    spool_dir = settings.vault_dir / "incoming"
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(dir=spool_dir, prefix=".upload-", suffix=".tmp", delete=False)
+    handle.close()
+    return display_name, Path(handle.name), hashlib.sha256()
+
+
+def append_upload_chunk(temp_path: Path, hash_obj: "hashlib._Hash", chunk: bytes, received: int) -> int:
+    """Append one chunk, enforcing the size cap before buffering more."""
+    received += len(chunk)
+    if received > MAX_RESUME_BYTES:
+        temp_path.unlink(missing_ok=True)
+        raise ResumeTooLargeError("Resume exceeds the 50 MiB limit")
+    with temp_path.open("ab") as handle:
+        handle.write(chunk)
+    hash_obj.update(chunk)
+    return received
+
+
+def discard_upload_spool(temp_path: Path) -> None:
+    temp_path.unlink(missing_ok=True)
 
 
 def validate_and_store_resume(
@@ -92,17 +142,31 @@ def validate_and_store_resume(
     content_type: str | None,
     data: bytes,
 ) -> tuple[ResumeVersion, bool]:
-    display_name = _safe_display_name(filename)
-    ext = Path(display_name).suffix.lower()
-    if ext not in _MIME_BY_EXT:
-        raise UnsupportedResumeTypeError("Only PDF and DOCX resumes are supported")
-    if len(data) > MAX_RESUME_BYTES:
-        raise ResumeTooLargeError("Resume exceeds the 50 MiB limit")
+    """In-memory convenience wrapper around the streaming ingest primitives.
+    The API route uses the streaming path directly; this keeps bytes-based
+    callers (tests, scripts) on the same pipeline."""
+    display_name, temp_path, hash_obj = open_upload_spool(settings, filename)
+    append_upload_chunk(temp_path, hash_obj, data, 0)
+    return finalize_streamed_upload(
+        session, settings, display_name, temp_path, len(data), hash_obj.hexdigest()
+    )
 
-    _validate_supported_content(ext, data)
-    sha256 = hashlib.sha256(data).hexdigest()
+
+def finalize_streamed_upload(
+    session: Session,
+    settings: AppSettings,
+    display_name: str,
+    temp_path: Path,
+    size_bytes: int,
+    sha256: str,
+) -> tuple[ResumeVersion, bool]:
+    """Validate the streamed temp file and move it into the content-addressed
+    vault, then commit the ResumeVersion row."""
+    ext = Path(display_name).suffix.lower()
+    validate_supported_content_file(ext, temp_path)
     existing = session.scalar(select(ResumeVersion).where(ResumeVersion.sha256 == sha256))
     if existing is not None:
+        temp_path.unlink(missing_ok=True)
         return existing, True
 
     next_version = (session.scalar(select(func.max(ResumeVersion.version_number))) or 0) + 1
@@ -110,18 +174,11 @@ def validate_and_store_resume(
     final_path = settings.vault_dir / relpath
     final_path.parent.mkdir(parents=True, exist_ok=True)
 
-    temp_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(dir=final_path.parent, prefix=".upload-", suffix=".tmp", delete=False) as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-            temp_path = Path(handle.name)
         if final_path.exists():
             temp_path.unlink(missing_ok=True)
         else:
             os.replace(temp_path, final_path)
-        temp_path = None
 
         resume = ResumeVersion(
             id=uuid.uuid4().hex,
@@ -129,7 +186,7 @@ def validate_and_store_resume(
             original_filename=display_name,
             file_ext=ext,
             mime_type=_MIME_BY_EXT[ext],
-            size_bytes=len(data),
+            size_bytes=size_bytes,
             vault_relpath=relpath.as_posix(),
             version_number=next_version,
             extraction_status="PENDING",
@@ -153,28 +210,8 @@ def validate_and_store_resume(
         return resume, False
     except Exception:
         session.rollback()
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
+        temp_path.unlink(missing_ok=True)
         raise
-
-
-def read_upload_limited(file_obj, max_bytes: int = MAX_RESUME_BYTES) -> bytes:
-    """Read an upload in chunks, refusing to buffer more than max_bytes.
-
-    Unlike reading the whole upload into memory first, the size limit stops
-    the transfer instead of merely rejecting after full ingestion.
-    """
-    chunks: list[bytes] = []
-    received = 0
-    while True:
-        chunk = file_obj.read(1024 * 1024)
-        if not chunk:
-            break
-        received += len(chunk)
-        if received > max_bytes:
-            raise ResumeTooLargeError("Resume exceeds the 50 MiB limit")
-        chunks.append(chunk)
-    return b"".join(chunks)
 
 
 def reconcile_vault(session: Session, settings: AppSettings) -> int:
@@ -185,10 +222,10 @@ def reconcile_vault(session: Session, settings: AppSettings) -> int:
     number of removed content directories.
     """
     known_shas = set(session.scalars(select(ResumeVersion.sha256)).all())
+    removed = 0
     resumes_root = settings.vault_dir / "resumes"
     if not resumes_root.is_dir():
         return 0
-    removed = 0
     for entry in resumes_root.iterdir():
         if not entry.is_dir() or entry.name in known_shas:
             continue

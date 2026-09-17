@@ -12,12 +12,26 @@ from ..db import get_engine
 from ..models import ProfileDraftField, ResumeVersion
 from ..profile.registry import get_field_definition
 from ..profile.service import create_resume_drafts
+from pathlib import Path
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from ..config import get_settings
+from ..db import get_engine
+from ..models import ProfileDraftField, ResumeVersion
+from ..profile.registry import get_field_definition
+from ..profile.service import create_resume_drafts
 from ..resumes.vault import (
-    MAX_RESUME_BYTES,
+    append_upload_chunk,
+    discard_upload_spool,
+    finalize_streamed_upload,
+    open_upload_spool,
     InvalidResumeError,
     ResumeTooLargeError,
     UnsupportedResumeTypeError,
-    validate_and_store_resume,
 )
 
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
@@ -117,27 +131,39 @@ def _draft_read(session: Session, draft: ProfileDraftField) -> ResumeDraftRead:
 async def import_resume(file: UploadFile = File(...)) -> ResumeImportRead:
     settings = get_settings()
     engine = get_engine(settings)
+    temp_path: Path | None = None
     try:
-        chunks: list[bytes] = []
+        # True streaming ingest: chunks go straight to a spool file while
+        # the hash updates incrementally. The body never lands in memory.
+        try:
+            display_name, temp_path, hash_obj = open_upload_spool(settings, file.filename or "resume")
+        except UnsupportedResumeTypeError as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
         received = 0
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            received += len(chunk)
-            if received > MAX_RESUME_BYTES:
-                raise HTTPException(status_code=413, detail="Resume exceeds the 50 MiB limit")
-            chunks.append(chunk)
-        data = b"".join(chunks)
+        try:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                received = append_upload_chunk(temp_path, hash_obj, chunk, received)
+        except ResumeTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except UnsupportedResumeTypeError as exc:
+            discard_upload_spool(temp_path)
+            temp_path = None
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
+
         with Session(engine) as session:
             try:
-                resume, deduplicated = validate_and_store_resume(
+                resume, deduplicated = finalize_streamed_upload(
                     session,
                     settings,
-                    file.filename or "resume",
-                    file.content_type,
-                    data,
+                    display_name,
+                    temp_path,
+                    received,
+                    hash_obj.hexdigest(),
                 )
+                temp_path = None
                 if not deduplicated and resume.extraction_status == "EXTRACTED" and resume.extracted_text:
                     create_resume_drafts(session, resume)
                 payload = _resume_read(session, resume)
@@ -149,6 +175,8 @@ async def import_resume(file: UploadFile = File(...)) -> ResumeImportRead:
             except InvalidResumeError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
+        if temp_path is not None:
+            discard_upload_spool(temp_path)
         engine.dispose()
 
 
