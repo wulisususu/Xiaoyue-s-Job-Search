@@ -68,6 +68,21 @@ export interface ProfileCollectionItem {
   updated_at: string;
 }
 
+export interface ProfileCollectionDraft {
+  id: number;
+  resume_version_id: string;
+  resume_version_number: number;
+  resume_filename: string;
+  kind: string;
+  label: string;
+  payload: Record<string, unknown>;
+  confidence: number | null;
+  extractor_name: string;
+  status: string;
+  created_at: string;
+  reviewed_at: string | null;
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${CORE_API_BASE()}${path}`;
   const auth = authHeaders();
@@ -167,5 +182,21 @@ export function reorderProfileCollectionItems(kind: string, itemIds: number[]): 
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ item_ids: itemIds }),
+  });
+}
+
+export function getPendingProfileCollectionDrafts(): Promise<ProfileCollectionDraft[]> {
+  return requestJson<ProfileCollectionDraft[]>('/api/profile/collection-drafts?status=PENDING');
+}
+
+export function acceptProfileCollectionDraft(draftId: number): Promise<ProfileCollectionItem> {
+  return requestJson<ProfileCollectionItem>(`/api/profile/collection-drafts/${draftId}/accept`, {
+    method: 'POST',
+  });
+}
+
+export function rejectProfileCollectionDraft(draftId: number): Promise<ProfileCollectionDraft> {
+  return requestJson<ProfileCollectionDraft>(`/api/profile/collection-drafts/${draftId}/reject`, {
+    method: 'POST',
   });
 }
