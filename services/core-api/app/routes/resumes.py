@@ -51,6 +51,7 @@ class ResumeDraftRead(BaseModel):
     resume_version_id: str
     resume_version_number: int
     resume_filename: str
+    extraction_run_id: int | None = None
     field_key: str
     label: str
     category: str
@@ -113,6 +114,7 @@ def _draft_read(session: Session, draft: ProfileDraftField) -> ResumeDraftRead:
         resume_version_id=draft.resume_version_id,
         resume_version_number=resume.version_number,
         resume_filename=resume.original_filename,
+        extraction_run_id=draft.extraction_run_id,
         field_key=draft.field_key,
         label=definition.label,
         category=definition.category,

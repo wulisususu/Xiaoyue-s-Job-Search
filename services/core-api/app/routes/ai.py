@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..ai.errors import ProviderError
+from ..ai.openai_compatible import OpenAICompatibleExtractionProvider
 from ..ai.provider import normalize_base_url
 from ..ai.secrets import (
     DEFAULT_AI_API_KEY_REF,
@@ -14,7 +17,14 @@ from ..ai.secrets import (
 )
 from ..config import get_settings
 from ..db import get_engine
-from ..models import AIProviderConfig
+from ..models import (
+    AIExtractionRun,
+    AIProviderConfig,
+    ProfileCollectionDraft,
+    ProfileDraftField,
+    ResumeVersion,
+)
+from ..profile.extraction_runs import execute_extraction_run
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -208,5 +218,143 @@ def delete_provider_api_key() -> AIProviderRead:
                     pass
             session.refresh(config)
             return _provider_read(config)
+    finally:
+        engine.dispose()
+
+
+class AIProviderNotConfiguredError(RuntimeError):
+    pass
+
+
+class AIProviderKeyMissingError(RuntimeError):
+    pass
+
+
+class AIExtractionRunCreate(BaseModel):
+    resume_version_id: str = Field(min_length=1, max_length=32)
+
+
+class AIExtractionRunRead(BaseModel):
+    id: int
+    resume_version_id: str
+    provider: str
+    model: str
+    prompt_version: str
+    schema_version: str
+    status: str
+    input_hash: str | None = None
+    error: str | None = None
+    created_at: str
+    completed_at: str | None = None
+    scalar_draft_count: int
+    collection_draft_count: int
+
+
+def build_default_provider(session: Session) -> OpenAICompatibleExtractionProvider:
+    """Materialize the unified provider from the default AIProviderConfig.
+
+    Swapping OpenAI/DeepSeek/Qwen only changes the config row; this factory
+    and every caller above it stay untouched.
+    """
+    config = session.get(AIProviderConfig, "default")
+    if config is None:
+        raise AIProviderNotConfiguredError("Configure the AI provider before running an extraction")
+    if not config.secret_ref:
+        raise AIProviderKeyMissingError("Save an AI provider API key before running an extraction")
+    try:
+        api_key = get_secret_store().get_secret(config.secret_ref)
+    except CredentialStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not api_key:
+        raise AIProviderKeyMissingError("Save an AI provider API key before running an extraction")
+    return OpenAICompatibleExtractionProvider(config, api_key)
+
+
+def _run_read(session: Session, run: AIExtractionRun) -> AIExtractionRunRead:
+    scalar_count = int(
+        session.scalar(
+            select(func.count(ProfileDraftField.id)).where(
+                ProfileDraftField.extraction_run_id == run.id
+            )
+        )
+        or 0
+    )
+    collection_count = int(
+        session.scalar(
+            select(func.count(ProfileCollectionDraft.id)).where(
+                ProfileCollectionDraft.extraction_run_id == run.id
+            )
+        )
+        or 0
+    )
+    return AIExtractionRunRead(
+        id=run.id,
+        resume_version_id=run.resume_version_id,
+        provider=run.provider,
+        model=run.model,
+        prompt_version=run.prompt_version,
+        schema_version=run.schema_version,
+        status=run.status,
+        input_hash=run.input_hash,
+        error=run.error,
+        created_at=run.created_at.isoformat(),
+        completed_at=run.completed_at.isoformat() if run.completed_at else None,
+        scalar_draft_count=scalar_count,
+        collection_draft_count=collection_count,
+    )
+
+
+@router.post("/extraction-runs", response_model=AIExtractionRunRead)
+def create_extraction_run(body: AIExtractionRunCreate) -> AIExtractionRunRead:
+    """The one formal AI chain entrypoint:
+    Resume → AIExtractionRun → provider → validated PENDING drafts."""
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            resume = session.get(ResumeVersion, body.resume_version_id)
+            if resume is None:
+                raise HTTPException(status_code=404, detail="Resume version not found")
+            if resume.extraction_status != "EXTRACTED" or not resume.extracted_text:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Resume version has no extracted text to run extraction on",
+                )
+            try:
+                provider = build_default_provider(session)
+            except AIProviderNotConfiguredError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except AIProviderKeyMissingError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+            try:
+                run = execute_extraction_run(session, resume, provider)
+            except ProviderError:
+                # The run row is the record: provider failures come back as a
+                # FAILED run with the error text, never as a silent 5xx.
+                failed = session.scalar(
+                    select(AIExtractionRun)
+                    .where(AIExtractionRun.resume_version_id == resume.id)
+                    .order_by(AIExtractionRun.id.desc())
+                )
+                if failed is None:
+                    raise
+                return _run_read(session, failed)
+            return _run_read(session, run)
+    finally:
+        engine.dispose()
+
+
+@router.get("/extraction-runs", response_model=list[AIExtractionRunRead])
+def list_extraction_runs(
+    resume_version_id: str | None = Query(default=None),
+) -> list[AIExtractionRunRead]:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            query = select(AIExtractionRun).order_by(AIExtractionRun.id.desc())
+            if resume_version_id:
+                query = query.where(AIExtractionRun.resume_version_id == resume_version_id)
+            runs = session.scalars(query).all()
+            return [_run_read(session, run) for run in runs]
     finally:
         engine.dispose()
