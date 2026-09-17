@@ -3,6 +3,12 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { ProfilePage } from './ProfilePage';
 
+// Shared 2-core CI runners occasionally stall for multiple seconds
+// (steal-time), which can trip the default 5s per-test budget mid-flow.
+// waitFor conditions still cap at asyncUtilTimeout (5s), so genuine
+// regressions still fail fast; this only absorbs machine-level stalls.
+vi.setConfig({ testTimeout: 20_000 });
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
