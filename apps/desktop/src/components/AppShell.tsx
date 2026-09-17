@@ -10,6 +10,11 @@ const navItems = [
 ] as const;
 
 export function AppShell() {
+  const coreError =
+    typeof window !== 'undefined'
+      ? (window as unknown as Record<string, unknown>).__XIAOYUE_CORE_ERROR__
+      : undefined;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -34,7 +39,17 @@ export function AppShell() {
         </nav>
         <div className="sidebar-footer">Local-first · V0.1</div>
       </aside>
-      <main className="main-content"><Outlet /></main>
+      <main className="main-content">
+        {typeof coreError === 'string' && coreError !== '' && (
+          <div role="alert" className="core-error-banner">
+            <strong>本地核心服务启动失败</strong>
+            <div>岗位、资料、简历等功能依赖本地 Core 服务，当前不可用。</div>
+            <div>原因：{coreError}</div>
+            <div>请在应用数据目录 logs/ 下查看 core-*.log（每次启动一对文件），重启应用后重试。</div>
+          </div>
+        )}
+        <Outlet />
+      </main>
     </div>
   );
 }

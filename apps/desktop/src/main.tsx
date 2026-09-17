@@ -12,14 +12,22 @@ import './styles/global.css';
 async function discoverCore(): Promise<void> {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const runtime = await invoke<{ base_url: string; session_token: string } | null>(
-      'core_endpoint',
-    );
-    if (runtime) {
+    const runtime = await invoke<{
+      base_url: string | null;
+      session_token: string | null;
+      status: string;
+      detail: string | null;
+    } | null>('core_endpoint');
+    if (runtime?.status === 'launched' && runtime.base_url) {
       (window as unknown as Record<string, unknown>).__XIAOYUE_CORE__ = {
         baseUrl: runtime.base_url,
-        sessionToken: runtime.session_token,
+        sessionToken: runtime.session_token ?? '',
       };
+    } else if (runtime?.status === 'failed') {
+      // Bundled but broken: surface a diagnosable banner instead of a
+      // silently headless app. dev/unbundled stays quiet by design.
+      (window as unknown as Record<string, unknown>).__XIAOYUE_CORE_ERROR__ =
+        runtime.detail ?? '未知失败';
     }
   } catch {
     // Not running inside Tauri (or dev shell without sidecar): keep defaults.
