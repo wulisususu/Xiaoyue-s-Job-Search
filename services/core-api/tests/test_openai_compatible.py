@@ -142,6 +142,19 @@ def test_provider_satisfies_the_unified_contract_protocol():
     assert isinstance(provider, ProfileExtractionProvider)
 
 
+def test_provider_metadata_reflects_endpoint_configuration_without_network():
+    provider = make_provider(
+        lambda request: (_ for _ in ()).throw(AssertionError("must not call the network"))
+    )
+
+    assert provider.metadata() == ExtractionMetadata(
+        provider=OPENAI_COMPATIBLE_PROVIDER_ID,
+        model="reasoning-model",
+        prompt_version=OPENAI_COMPATIBLE_PROMPT_VERSION,
+        schema_version=OPENAI_COMPATIBLE_SCHEMA_VERSION,
+    )
+
+
 def test_endpoint_and_model_switching_requires_no_business_layer_change():
     """/"DeepSeek" vs "Qwen" only changes AIProviderConfig; the provider class,
     the extraction entrypoint and the resulting bundle shape stay identical."""

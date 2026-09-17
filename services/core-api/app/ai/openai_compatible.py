@@ -284,6 +284,14 @@ class OpenAICompatibleExtractionProvider:
         self._api_key = api_key
         self._transport = transport
 
+    def metadata(self) -> ExtractionMetadata:
+        return ExtractionMetadata(
+            provider=OPENAI_COMPATIBLE_PROVIDER_ID,
+            model=self._config.text_model,
+            prompt_version=OPENAI_COMPATIBLE_PROMPT_VERSION,
+            schema_version=OPENAI_COMPATIBLE_SCHEMA_VERSION,
+        )
+
     def extract(
         self,
         text: str,
@@ -362,10 +370,5 @@ class OpenAICompatibleExtractionProvider:
         return ProfileExtractionBundle(
             fields=_parse_candidates(candidate_payload, registry),
             collections=_parse_collection_candidates(candidate_payload),
-            metadata=ExtractionMetadata(
-                provider=OPENAI_COMPATIBLE_PROVIDER_ID,
-                model=self._config.text_model,
-                prompt_version=OPENAI_COMPATIBLE_PROMPT_VERSION,
-                schema_version=OPENAI_COMPATIBLE_SCHEMA_VERSION,
-            ),
+            metadata=self.metadata(),
         )

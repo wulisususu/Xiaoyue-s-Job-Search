@@ -61,6 +61,11 @@ class ProfileExtractionProvider(Protocol):
     output is only ever allowed to become PENDING drafts after validation.
     """
 
+    def metadata(self) -> ExtractionMetadata:
+        """Provenance recorded on AIExtractionRun before extraction starts,
+        so failed runs are traceable to a provider/model too."""
+        ...
+
     def extract(self, text: str) -> ProfileExtractionBundle: ...
 
 
@@ -107,16 +112,19 @@ def _extract_contact_candidates(text: str) -> list[DraftCandidate]:
 class DeterministicExtractionProvider:
     """Offline contact fact extractor conforming to the unified contract."""
 
+    def metadata(self) -> ExtractionMetadata:
+        return ExtractionMetadata(
+            provider=DETERMINISTIC_PROVIDER_ID,
+            model=DETERMINISTIC_MODEL,
+            prompt_version=DETERMINISTIC_PROMPT_VERSION,
+            schema_version=DETERMINISTIC_SCHEMA_VERSION,
+        )
+
     def extract(self, text: str) -> ProfileExtractionBundle:
         return ProfileExtractionBundle(
             fields=_extract_contact_candidates(text),
             collections=[],
-            metadata=ExtractionMetadata(
-                provider=DETERMINISTIC_PROVIDER_ID,
-                model=DETERMINISTIC_MODEL,
-                prompt_version=DETERMINISTIC_PROMPT_VERSION,
-                schema_version=DETERMINISTIC_SCHEMA_VERSION,
-            ),
+            metadata=self.metadata(),
         )
 
 

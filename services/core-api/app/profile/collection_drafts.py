@@ -32,7 +32,7 @@ def _dump(value: dict[str, object]) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _validate_confidence(value: float | None) -> float | None:
+def validate_collection_confidence(value: float | None) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -63,7 +63,7 @@ def create_collection_drafts(
         prepared: list[tuple[CollectionDraftCandidate, dict[str, object], float | None, str]] = []
         for candidate in candidates:
             normalized_payload = validate_collection_payload(candidate.kind, candidate.payload)
-            confidence = _validate_confidence(candidate.confidence)
+            confidence = validate_collection_confidence(candidate.confidence)
             extractor_name = candidate.extractor_name.strip()
             if not extractor_name:
                 raise ValueError("collection draft extractor_name is required")
