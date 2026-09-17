@@ -10,12 +10,46 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Job, UrlObservation
+from ..models import Job, UrlCandidate, UrlObservation
 from .rediscovery import extract_rediscovery_candidates, persist_rediscovery_candidates
 from .scheduler import next_verification_interval
 from .verifier import Transport, VerificationResult, verify_url
 
 MAX_CONCURRENCY = 8
+MAX_CANDIDATE_CHECKS_PER_RUN = 2
+
+
+def _observe(session: Session, job_id: str, result: VerificationResult) -> None:
+    session.add(UrlObservation(job_id=job_id, checked_url=result.checked_url, final_url=result.final_url, redirect_chain_json=json.dumps(result.redirect_chain, ensure_ascii=False), http_status=result.http_status, health=result.health, ats=result.ats, page_type=result.page_type, apply_evidence_json=json.dumps(result.apply_evidence, ensure_ascii=False), content_fingerprint=result.content_fingerprint, error=result.error))
+
+
+def _promote_url_candidates(session: Session, job: Job, transport: Transport | None) -> bool:
+    """URL promotion policy, decision side.
+
+    Verify PENDING candidates for this job; a candidate that proves
+    VERIFIED_APPLY is promoted to apply_url/canonical_url and flips the job
+    to VERIFIED_OPEN. Broken candidates are DISCARDED. Returns True when a
+    promotion happened.
+    """
+    candidates = session.scalars(
+        select(UrlCandidate)
+        .where(UrlCandidate.job_id == job.id, UrlCandidate.status == "PENDING")
+        .order_by(UrlCandidate.discovered_at.desc(), UrlCandidate.id.desc())
+        .limit(MAX_CANDIDATE_CHECKS_PER_RUN)
+    ).all()
+    for candidate in candidates:
+        result = verify_url(candidate.url, transport=transport)
+        _observe(session, job.id, result)
+        candidate.verified_health = result.health
+        if result.health == "VERIFIED_APPLY":
+            job.apply_url = candidate.url
+            job.canonical_url = result.final_url or candidate.url
+            job.status = "VERIFIED_OPEN"
+            candidate.status = "PROMOTED"
+            return True
+        if result.health in {"BROKEN", "STALE"}:
+            candidate.status = "DISCARDED"
+    return False
 
 
 @dataclass(slots=True)
@@ -53,6 +87,10 @@ def verify_job(session: Session, job: Job, transport: Transport | None = None) -
         raise ValueError("job has no URL to verify")
     result = verify_url(checked_url, transport=transport)
     _apply_result(session, job, result)
+    # Candidates are evaluated on every verify run regardless of the main
+    # result: an upstream URL rewrite must get its chance even while the old
+    # portal is still technically alive.
+    _promote_url_candidates(session, job, transport)
     session.commit()
     return result
 
@@ -113,6 +151,7 @@ def verify_due_jobs(session: Session, limit: int = 50, transport: Transport | No
     for job, result in fetched:
         session.add(job)
         _apply_result(session, job, result)
+        _promote_url_candidates(session, job, transport)
         if result.health == "VERIFIED_APPLY": summary.verified_open += 1
         elif result.health in {"BROKEN", "STALE"}: summary.rediscovery_required += 1
         elif result.health == "ACCESS_BLOCKED": summary.blocked += 1

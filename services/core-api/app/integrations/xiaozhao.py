@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from ..jobs.company_resolver import resolve_company
 from ..jobs.deduper import find_job, new_job_id
-from ..models import Job, JobSource, utcnow
+from ..jobs.identity import normalize_job_url
+from ..models import Job, JobSource, UrlCandidate, utcnow
 from .types import ImportSummary
 
 SOURCE_ACTIVE = "ACTIVE"
@@ -42,6 +43,34 @@ def _merge_job_fields(job: Job, values: dict[str, str | None]) -> bool:
             setattr(job, key, value)
             changed = True
     return changed
+
+
+def _record_url_candidate(session: Session, job: Job, url: str, source_name: str, summary: ImportSummary) -> None:
+    """URL promotion policy, intake side.
+
+    When a known job's upstream URL changes, NEVER touch apply_url or
+    canonical_url directly: park the normalized new URL as a PENDING
+    candidate for the verification engine to prove before promotion.
+    """
+    incoming = normalize_job_url(url, provider="company")
+    if not incoming:
+        incoming = url
+    current_raw = job.canonical_url or job.apply_url or ""
+    current = normalize_job_url(current_raw, provider="company") or current_raw
+    if not current or incoming == current or incoming == job.apply_url:
+        return
+    existing = session.scalar(
+        select(UrlCandidate).where(UrlCandidate.job_id == job.id, UrlCandidate.url == incoming)
+    )
+    if existing is not None:
+        if existing.status in {"DISCARDED"}:
+            # Seen again upstream after being broken once: give it another
+            # chance only if the source insists; keep DISCARDED until then.
+            pass
+        return
+    session.add(UrlCandidate(job_id=job.id, url=incoming, source_name=source_name))
+    session.flush()
+    summary.url_candidates_created += 1
 
 
 def _stale_unseen_sources(session: Session, source_name: str, seen_ids: set[int]) -> tuple[int, int]:
@@ -128,6 +157,8 @@ def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = 
             if job.status == "STALE":
                 # A stale job just re-appeared upstream: revive it.
                 job.status = "DISCOVERED_URL_UNVERIFIED" if url else "DISCOVERED_NO_URL"
+            if url:
+                _record_url_candidate(session, job, url, source_name, summary)
 
         record_key = _identity_key(company_name or "未知企业", title, url, batch)
         new_hash = _record_hash(record)

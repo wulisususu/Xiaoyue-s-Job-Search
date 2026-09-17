@@ -11,3 +11,4 @@ class ImportSummary:
     sources_staled: int = 0
     jobs_staled: int = 0
     sources_updated: int = 0
+    url_candidates_created: int = 0

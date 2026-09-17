@@ -143,6 +143,26 @@ class ApplicationSession(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
+class UrlCandidate(Base):
+    """A new entry URL seen upstream for an existing canonical job.
+
+    Upstream URL rewrites are NEVER applied directly to the canonical job:
+    they land here as PENDING candidates, get verified by the verification
+    engine, and are only promoted to job.apply_url/canonical_url on
+    VERIFIED_APPLY evidence. Broken candidates are DISCARDED.
+    """
+
+    __tablename__ = "url_candidates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING", index=True)
+    source_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    verified_health: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(default=utcnow)
+    __table_args__ = (UniqueConstraint("job_id", "url", name="uq_url_candidate_job_url"),)
+
+
 class UrlObservation(Base):
     __tablename__ = "url_observations"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
