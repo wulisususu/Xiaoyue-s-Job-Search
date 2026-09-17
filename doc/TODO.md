@@ -24,17 +24,18 @@
 - [x] 前端 Profile / Jobs / Resumes 等主链已具备动态 Core endpoint/auth 基础。
 - [x] `Cargo.lock` 已提交。
 - [x] CI 已实际执行完整 `tauri build`，Rust compile/link 可通过。
+- [x] PyInstaller `onedir` 打包 `xiaoyue-core-api.exe`；alembic scripts 以 datas 内嵌（`_core_root()` 兼容 frozen 模式）。
+- [x] 打包 exe 烟测（本地与 CI）：fresh 数据目录 → alembic head → health 200 → 无 token 401 / 正确 token 200。
+- [x] Tauri resources 绑定 Core 可执行文件（`<install>/core-api/xiaoyue-core-api.exe`，`find_core_bin` 原生寻址）。
+- [x] `bundle.active = true`，targets = NSIS（选定为 Windows 主渠道）。
+- [x] CSP 允许 `http://127.0.0.1:*`（sidecar 动态端口）。
+- [x] sidecar stdout/stderr 写入 `<data>/logs/core-<millis>-<pid>.{out,err}.log`，只保留最新 20 个。
+- [x] Core 启动失败时 UI 出示可诊断横幅（失败原因 + 日志位置）；dev 无打包保持静默。
 
 **仍需完成**：
 
-- [ ] 确定 Python Core 发布方案，优先评估 PyInstaller `onedir`。
-- [ ] 构建 `xiaoyue-core-api.exe`，验证 keyring / lxml / pypdf / python-docx / Alembic 等依赖完整。
-- [ ] Tauri `externalBin` / resources 真正绑定 Core 可执行文件。
-- [ ] `bundle.active = true`。
-- [ ] 生成 Windows installer（NSIS/MSI 选定一个主渠道）。
-- [ ] sidecar stdout/stderr 写入本地 rotating log，禁止 Release 永久吞掉。
-- [ ] Core 启动失败时 UI 给出可诊断错误，而不是静默无后端。
-- [ ] Fresh Windows smoke：安装 → 启动 → migration → health → Job Radar → Profile。
+- [x] NSIS installer 构建与安装级 smoke（本地 Windows 实测）：`小悦求职_0.1.0_x64-setup.exe`（24.6MB）静默安装 → 布局 `xiaoyue-job-search.exe` + `core-api/xiaoyue-core-api.exe` + `uninstall.exe` → 安装版 sidecar health 200 / 无 token 401 / 正确 token 200 / fresh 数据目录迁移 → 静默卸载干净（exit 0）。
+- [ ] 真人 GUI smoke：安装后启动桌面应用，人工过一遍 Job Radar → Profile 主链（自动化已覆盖安装布局与 sidecar 行为，此项只需真实桌面环境点击确认 UI 体验）。
 
 **Acceptance**：
 

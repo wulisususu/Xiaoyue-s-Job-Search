@@ -206,11 +206,22 @@ Phase 3A 明确**没有**引入网络 AI、OCR 引擎、Browser Agent、API Key 
 1. **本机 API 信任边界（session token）**：token 由 Tauri shell 每次启动用 OS CSPRNG 生成（BCryptGenRandom，256-bit hex），只存在于两侧进程内存与 `Authorization: Bearer` 头中，绝不落入 SQLite、日志或磁盘；`/api/*`（health 除外）强制校验 Bearer + loopback Host/Origin。新增任何 router（包括未来的 Browser Agent 高权限路由）天然被 middleware 覆盖——存在回归测试逐路由断言。前端所有 Core client 统一经 `coreRuntime()` + `authHeaders()` wrapper。
 2. **招聘 URL verifier SSRF guard**：core 主动出网抓取/验证招聘 URL 时走 pinned-IP 校验（resolve-once、逐地址校验、redirect 每跳重新 pin）。它与「本地 AI Provider 访问 localhost 出网」是两套独立安全策略，互不豁免。
 
+### Sidecar 发布闭环（PyInstaller onedir + NSIS）
+
+- [x] `scripts/build-core.ps1`：PyInstaller onedir 打包 `xiaoyue-core-api.exe`（入口直接 import app 对象；alembic scripts 以 datas 内嵌，`_core_root()` 在 frozen 模式走 `sys._MEIPASS`）
+- [x] `scripts/smoke-core-exe.ps1`：fresh 数据目录 → migration head → health 200 → 无 token 401 / 正确 token 200（本地与 CI 均执行）
+- [x] tauri bundle：`active=true`、targets=NSIS（Windows 主渠道）、resources 把 onedir 产物放进 `<install>/core-api/`（`find_core_bin` 原生寻址；不用 externalBin，因为 onedir 是目录而 externalBin 要单文件）
+- [x] CSP `connect-src http://127.0.0.1:*` 适配动态端口
+- [x] sidecar stdout/stderr → `<data>/logs/core-<millis>-<pid>.{out,err}.log`（保留最新 20 个）
+- [x] 启动失败可诊断：Rust `SidecarLaunch` 三态（Launched / NotBundled=dev / Failed+原因），UI 出示横幅 + 日志位置
+- [x] 安装级 smoke（本地 Windows 实测）：NSIS installer 静默安装 → 布局校验 → 安装版 sidecar health/auth/迁移 → 静默卸载；`tauri build` 产出 `小悦求职_0.1.0_x64-setup.exe`（Tauri 首次会自行下载 NSIS 工具链，需网络可达 github.com）
+- [ ] 真人 GUI smoke（真实桌面环境人工确认 UI 主链）
+
 ## 当前状态与下一阶段
 
-Phase 3C 已落地统一 AI 提取契约，session token 已硬化（OS CSPRNG + auth E2E + 全 client 统一 wrapper）。剩余工作见 `doc/TODO.md`，重点包括：
+Phase 3C、session token 硬化、sidecar NSIS 发布闭环均已落地。剩余工作见 `doc/TODO.md`，重点包括：
 
-1. Tauri sidecar 打包（PyInstaller onedir）与安装器构建；
+1. 真人 GUI smoke（真实桌面安装 NSIS installer 后人工过一遍主链）；
 2. Application CRM Phase 2、Dashboard 真实数据与设置页；
 3. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
 
