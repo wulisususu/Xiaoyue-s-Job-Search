@@ -6,9 +6,15 @@ import sqlite3
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..jobs.company_resolver import add_company_alias, add_default_aliases, resolve_company
+from ..jobs.company_resolver import (
+    add_company_alias,
+    add_default_aliases,
+    insert_company_or_get_existing,
+    resolve_company,
+)
 from ..jobs.identity import normalize_company_name
 from ..models import Company, CompanyRelation, CompanySource
 from .types import ImportSummary
@@ -56,15 +62,19 @@ def _create_source_company(
 
     resolved = resolve_company(session, name, create_unknown=False)
     if resolved is None:
-        resolved = Company(
-            name=name.strip(),
-            normalized_name=normalize_company_name(name),
-            ownership=ownership,
-            province=province,
-            level=level,
+        # Atomic on the unique identity: a concurrent sync (tencent/xiaozhao
+        # resolver path) may have committed the same company between our
+        # lookup and this insert - reuse their row instead of crashing.
+        resolved = insert_company_or_get_existing(
+            session,
+            Company(
+                name=name.strip(),
+                normalized_name=normalize_company_name(name),
+                ownership=ownership,
+                province=province,
+                level=level,
+            ),
         )
-        session.add(resolved)
-        session.flush()
     else:
         if resolved.ownership == "unknown":
             resolved.ownership = ownership
@@ -72,14 +82,19 @@ def _create_source_company(
         resolved.level = resolved.level or level
 
     add_default_aliases(session, resolved, "workfind")
-    session.add(
-        CompanySource(
-            company_id=resolved.id,
-            source_name="workfind",
-            source_key=source_key,
-            raw_json=json.dumps(raw or {}, ensure_ascii=False, sort_keys=True),
-        )
+    source_row = CompanySource(
+        company_id=resolved.id,
+        source_name="workfind",
+        source_key=source_key,
+        raw_json=json.dumps(raw or {}, ensure_ascii=False, sort_keys=True),
     )
+    nested = session.begin_nested()
+    try:
+        session.add(source_row)
+        session.flush()
+        nested.commit()
+    except IntegrityError:
+        nested.rollback()
     session.flush()
     return resolved, True
 
