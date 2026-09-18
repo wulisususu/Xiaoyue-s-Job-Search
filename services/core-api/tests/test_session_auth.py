@@ -65,6 +65,44 @@ def test_api_allows_tauri_origin(token_client):
     assert response.status_code == 200
 
 
+def test_actual_webview_origins_pass_the_guard(token_client):
+    """The packaged Windows WebView2 serves the frontend from
+    https://tauri.localhost (older builds: http). These must NOT 403."""
+    for origin in ("https://tauri.localhost", "http://tauri.localhost"):
+        headers = {"Authorization": f"Bearer {TOKEN}", "Origin": origin}
+        response = token_client.get("/api/jobs/stats", headers=headers)
+        assert response.status_code == 200, f"origin {origin} rejected"
+
+
+def test_cors_preflight_from_webview_succeeds(token_client):
+    """Reproduces the packaged-app outage: browsers send an OPTIONS
+    preflight (no Authorization header possible) before every credentialed
+    cross-origin call. The guard must let CORSMiddleware answer it for the
+    real webview origins, else every API feature dies."""
+    for origin in ("https://tauri.localhost", "http://tauri.localhost"):
+        headers = {
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization, content-type",
+        }
+        response = token_client.options("/api/jobs", headers=headers)
+        assert response.status_code == 200, (
+            f"preflight for {origin} got {response.status_code}"
+        )
+        assert response.headers.get("access-control-allow-origin") == origin
+
+
+def test_cors_preflight_from_foreign_origin_stays_refused(token_client):
+    headers = {
+        "Origin": "https://evil.example.com",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+    }
+    response = token_client.options("/api/jobs", headers=headers)
+    assert response.status_code != 200
+    assert response.headers.get("access-control-allow-origin") != "https://evil.example.com"
+
+
 def _every_api_route_path(application) -> list[str]:
     """Walk included routers: newer FastAPI wraps include_router results in
     _IncludedRouter; older versions expose APIRoute entries directly."""
