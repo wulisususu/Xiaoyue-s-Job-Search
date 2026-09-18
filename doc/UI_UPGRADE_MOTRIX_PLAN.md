@@ -1387,7 +1387,927 @@ Acceptance：
 
 ---
 
-# 30. 推荐提交拆分
+# 30. 多智能体并行执行计划
+
+本项目允许主智能体启动多个子智能体并行实施，但必须采用**分波次（Wave）并行**，不能让所有 Agent 从同一个旧基线同时改共享文件。
+
+核心原则：
+
+> **先冻结共享契约，再并行 feature；共享文件只能有一个 Owner；主智能体只做编排、审查、合并和冲突处理。**
+
+---
+
+## 30.1 角色拓扑
+
+建议由 **1 个主智能体（Orchestrator）+ 8 个执行/验证子智能体**组成。
+
+| 角色 | 代号 | 主要职责 | 是否长期存在 |
+|---|---|---|---|
+| 主智能体 / 集成负责人 | ORCH | 基线、任务编排、契约冻结、合并、冲突处理、最终验收 | 是 |
+| 基础 UI / Design System | UI-FOUNDATION | Tailwind、tokens、shadcn/Base UI、primitive | Wave 1 |
+| Desktop Shell | UI-SHELL | AppShell、Sidebar、Inset、PageHeader、PanelShell | Wave 2 |
+| Jobs 体验 | UI-JOBS | Job 高密度列表、virtualization、Inspector、筛选、数据源 UI | Wave 3 |
+| Dashboard + Applications | UI-DA | 首页、投递中心 | Wave 3 |
+| Profile + Resume | UI-PR | Profile SSOT UI、Draft Review、Resume Vault | Wave 3 |
+| Settings | UI-SETTINGS | settings-kit、设置页、Provider / 数据源 / 外观 UI | Wave 3 |
+| Desktop / Packaging | DESKTOP | Tauri Window Chrome、安装资源布局、Rust 路径、NSIS smoke | Wave 4/5 |
+| QA / E2E / Visual | QA | 基线截图、E2E、视觉回归、A11y、性能回归 | 全程观察，后期集中落地 |
+
+如果主智能体并发能力有限，优先保留：
+
+```text
+ORCH
+UI-FOUNDATION
+UI-SHELL
+UI-JOBS
+UI-PR
+UI-DA
+DESKTOP
+QA
+```
+
+Settings 可并入 UI-DA。
+
+---
+
+## 30.2 Git / Worktree 执行模型
+
+主智能体必须先创建一个总集成分支：
+
+```text
+feat/ui-modernization
+```
+
+从当前 main 的**明确 SHA**创建，不允许子智能体各自从“当时最新 main”随意开工。
+
+每个子智能体使用独立 branch + worktree：
+
+```text
+feat/ui-modernization
+│
+├── feat/ui-foundation
+├── feat/ui-shell
+├── feat/ui-jobs
+├── feat/ui-dashboard-applications
+├── feat/ui-profile-resume
+├── feat/ui-settings
+├── feat/ui-interaction
+├── feat/desktop-window-chrome
+├── chore/packaging-resources-layout
+└── test/ui-e2e-visual
+```
+
+规则：
+
+1. 子智能体禁止直接提交到 `main`；
+2. 子智能体禁止直接提交到 `feat/ui-modernization`；
+3. ORCH 是唯一合并者；
+4. 每个 Wave 开始时，ORCH 发布该 Wave 的 **base SHA**；
+5. 同一 Wave 的 Agent 必须从同一 base SHA 创建 branch；
+6. Wave 合并完成后，下一 Wave 必须从新的 integration HEAD 开始；
+7. 不允许长期 branch 跨越多个 Wave 后再“大合并”；
+8. feature Agent 禁止自行 rebase/merge 其他 feature Agent 分支；
+9. 冲突只由 ORCH 在 integration branch 处理；
+10. 合并前每个 Agent 必须提供 commit SHA + 测试结果 + 修改路径 + 风险说明。
+
+推荐工作方式：
+
+```text
+main
+  ↓
+feat/ui-modernization
+  ↓ Wave base SHA
+多个 worktree 并行
+  ↓
+ORCH review / merge
+  ↓
+新的 Wave base SHA
+```
+
+---
+
+## 30.3 共享文件所有权（Conflict Budget）
+
+以下文件/目录属于高冲突区域，必须设唯一 Owner。
+
+### UI-FOUNDATION 独占
+
+```text
+apps/desktop/package.json
+apps/desktop/vite.config.ts
+根 package manifest / lockfile（如因前端依赖发生变化）
+apps/desktop/src/styles/tokens.css
+apps/desktop/src/components/ui/**
+apps/desktop/src/lib/cn* / utils*（样式工具）
+shadcn 配置文件
+Tailwind 入口配置
+```
+
+其他 Agent **不得自行安装 npm 依赖**。如果需要新依赖，必须向 ORCH 提交依赖请求，由 UI-FOUNDATION 或 ORCH 集中处理。
+
+### UI-SHELL 独占
+
+```text
+apps/desktop/src/components/AppShell.tsx
+apps/desktop/src/components/desktop-kit/app-sidebar.tsx
+apps/desktop/src/components/desktop-kit/page-header.tsx
+apps/desktop/src/components/desktop-kit/panel-shell.tsx
+apps/desktop/src/app/routes.tsx（如确需调整）
+```
+
+Wave 2 合并后，以上公共 Shell API 视为冻结。
+
+### Feature Agent 各自独占
+
+```text
+UI-JOBS:
+  apps/desktop/src/features/jobs/**
+  apps/desktop/src/pages/JobsPage.tsx
+  对应 jobs UI tests
+
+UI-DA:
+  apps/desktop/src/features/dashboard/**
+  apps/desktop/src/features/applications/**
+  apps/desktop/src/pages/DashboardPage.tsx
+  apps/desktop/src/pages/ApplicationsPage.tsx
+  对应 tests
+
+UI-PR:
+  apps/desktop/src/features/profile/**
+  apps/desktop/src/features/resumes/**
+  apps/desktop/src/pages/ProfilePage.tsx
+  apps/desktop/src/pages/ResumesPage.tsx
+  对应 tests
+
+UI-SETTINGS:
+  apps/desktop/src/features/settings/**
+  apps/desktop/src/components/settings-kit/**
+  apps/desktop/src/pages/SettingsPage.tsx
+  对应 tests
+```
+
+### DESKTOP 独占
+
+```text
+apps/desktop/src-tauri/**
+apps/desktop/src/components/window-chrome/**
+安装 / NSIS / sidecar packaging 相关 scripts
+```
+
+注意：`tauri.conf.json` 与 Rust `main.rs` 同时会被 Window Chrome 和 Packaging 使用，因此这两项**不允许并行写同一文件**，见 Wave 4/5 顺序。
+
+### QA 独占
+
+```text
+e2e/**
+playwright*.config.*
+视觉回归 fixture / screenshot baseline
+独立的 smoke / benchmark 测试文件
+```
+
+QA 不应为了让测试通过而修改业务实现；发现实现缺陷时回报 ORCH，由对应 Owner 修复。
+
+---
+
+## 30.4 公共契约冻结点
+
+并行 feature 开始前，ORCH 必须确认以下契约已冻结：
+
+### Freeze A — UI Primitive Contract
+
+至少确定：
+
+```text
+Button
+Badge
+Card
+Input
+Select
+Dialog
+Tooltip
+Dropdown
+Tabs
+Sheet
+Skeleton
+Separator
+Switch
+Progress
+Toast
+```
+
+包括：
+
+- export path；
+- variant；
+- size；
+- token 命名；
+- `cn()` 使用方式。
+
+Freeze A 后，feature Agent 不允许自己复制一套 primitive。
+
+### Freeze B — Desktop Kit Contract
+
+至少确定：
+
+```text
+AppSidebar
+PageHeader
+PanelShell
+EmptyState
+StatusIndicator
+InspectorPanel
+```
+
+Freeze B 后，Wave 3 feature Agent 可以并行。
+
+### Freeze C — Domain/API Contract
+
+UI 项目继续复用现有 API client。
+
+明确：
+
+- Job status 枚举不因 UI 改名；
+- Application SSOT 不变；
+- Profile confirmed 语义不变；
+- Resume Draft 状态不变；
+- Core auth wrapper 不变；
+- session token 不变。
+
+任何 Agent 发现 API 缺失，只能记录“API gap”，不得为了 UI 直接私自改变后端语义。
+
+---
+
+# 30.5 Wave 0 — ORCH + QA 并行：基线冻结
+
+**可并行 Agent：ORCH、QA**
+
+### ORCH
+
+任务：
+
+- 建立 `feat/ui-modernization`；
+- 记录 main SHA；
+- 跑现有 test/build；
+- 记录当前 API / route / security invariant；
+- 输出 Wave 1 base SHA；
+- 建立文件 Owner 表。
+
+### QA
+
+任务：
+
+- 记录现有页面截图；
+- 记录 1024×700 / 1280×820 / 1440×900 当前表现；
+- 记录 Light 当前基线；
+- 记录 installer 目录树；
+- 建立最小 smoke checklist；
+- 不修改业务代码。
+
+### Gate 0
+
+必须同时满足：
+
+- baseline test 结果已记录；
+- baseline screenshot 已记录；
+- installer layout 已记录；
+- integration branch 可构建。
+
+Gate 0 通过后才进入 Wave 1。
+
+---
+
+# 30.6 Wave 1 — UI-FOUNDATION：共享底座串行完成
+
+**本 Wave 不建议多个 Agent 同时改前端共享底座。**
+
+负责人：`UI-FOUNDATION`
+
+任务：
+
+- Tailwind CSS；
+- `@tailwindcss/vite`；
+- Design Token；
+- shadcn / Base UI；
+- Lucide；
+- CVA / clsx / tailwind-merge；
+- 必要表单依赖；
+- UI primitive；
+- Light / Dark token 基础；
+- primitive unit tests。
+
+可以由 QA 同时**只读审查**和准备测试，但不得写共享前端文件。
+
+### Gate 1 / Freeze A
+
+ORCH 审查：
+
+- primitive API；
+- token；
+- dependency；
+- build；
+- unit test。
+
+通过后合入 integration，并发布 Wave 2 base SHA。
+
+---
+
+# 30.7 Wave 2 — UI-SHELL + QA 并行
+
+**可并行 Agent：UI-SHELL、QA**
+
+### UI-SHELL
+
+任务：
+
+- AppShell；
+- Sidebar inset；
+- Sidebar collapse；
+- Lucide 导航；
+- PageHeader；
+- PanelShell；
+- EmptyState；
+- StatusIndicator；
+- CoreFailureBanner 保留；
+- Desktop Kit 基础；
+- 1024px 最小窗口。
+
+### QA
+
+基于 Freeze A：
+
+- primitive interaction tests；
+- Sidebar 预期测试草案；
+- keyboard / focus checklist；
+- 不修改 Shell 实现。
+
+### Gate 2 / Freeze B
+
+ORCH 必须确认：
+
+- 六个一级路由均正常；
+- Sidebar active/collapse 正确；
+- Core Error 可见；
+- desktop-kit API 稳定；
+- 不存在旧/新两套 Shell。
+
+合并后发布 Wave 3 base SHA。
+
+---
+
+# 30.8 Wave 3 — 业务页面最大并行波次
+
+这是并行收益最大的阶段。
+
+**四个 Agent 可同时执行：**
+
+```text
+UI-JOBS
+UI-DA
+UI-PR
+UI-SETTINGS
+```
+
+四者必须从同一个 Wave 3 base SHA 开始。
+
+## UI-JOBS
+
+负责：
+
+- 高密度 Job 列表；
+- `@tanstack/react-virtual`；
+- Job Inspector；
+- filters；
+- search；
+- status badges；
+- Data Source Popover；
+- loading / empty / error；
+- verified gate；
+- Job 页面测试。
+
+禁止：
+
+- 修改 Job 后端状态含义；
+- 修改 Core client auth；
+- 把未验证 Job 变成可申请。
+
+## UI-DA
+
+负责 Dashboard + Applications：
+
+Dashboard：
+
+- 真实数据布局；
+- 今日状态；
+- 求职进度；
+- 今日建议；
+- 数据源摘要。
+
+Applications：
+
+- 状态 tabs；
+- 高密度列表；
+- Application detail；
+- Browser Agent progress surface（只接现有状态，不虚构后端状态）；
+- Human Confirm Gate UI 不得绕过。
+
+## UI-PR
+
+负责 Profile + Resume：
+
+Profile：
+
+- 完整度；
+- section；
+- confirmed source；
+- Draft Review；
+- history surface。
+
+Resume：
+
+- immutable version list；
+- SHA/version/status；
+- OCR_REQUIRED；
+- FAILED；
+- selected detail；
+- draft count。
+
+硬约束：
+
+- Resume import 不自动写 Profile；
+- Draft 必须 accept/reject；
+- Browser Agent 只读 confirmed data。
+
+## UI-SETTINGS
+
+负责：
+
+- settings-kit；
+- General；
+- Appearance；
+- AI Provider；
+- Data Sources；
+- Local Data；
+- Browser Automation；
+- About；
+- form / validation UI；
+- secret 不回显。
+
+### Wave 3 冲突规则
+
+Feature Agent 如果发现缺一个共享组件：
+
+1. 不直接修改 `components/ui/**`；
+2. 在结果中写 `Shared UI Request`；
+3. ORCH 判断：
+   - 可以 feature-local：先 feature-local；
+   - 应成为共享组件：由 UI-FOUNDATION 小修补或 ORCH 单独提交；
+4. 再让 feature Agent 基于补丁继续。
+
+### Gate 3
+
+ORCH 按顺序合并，推荐：
+
+```text
+UI-DA
+→ UI-PR
+→ UI-SETTINGS
+→ UI-JOBS
+```
+
+Jobs 最后合并是因为其桌面交互复杂度和共享组件需求最高。
+
+每次合并后：
+
+- frontend unit；
+- TypeScript build；
+- Core tests（确保无越界）；
+- 至少一轮 smoke。
+
+全部通过后发布 Wave 4 base SHA。
+
+---
+
+# 30.9 Wave 4 — UI Interaction + Window Chrome 并行
+
+建议拆出两个 Agent：
+
+```text
+UI-INTERACTION
+DESKTOP-WINDOW
+```
+
+两者可并行，但文件边界必须严格。
+
+## UI-INTERACTION
+
+只负责前端：
+
+- Light / Dark / System；
+- Command Palette；
+- Ctrl+K；
+- keyboard navigation；
+- Context Menu；
+- Toast integration；
+- focus restoration；
+- reduced motion；
+- accessibility polish。
+
+不得修改 `src-tauri/**`。
+
+## DESKTOP-WINDOW
+
+只负责：
+
+- Tauri Custom Titlebar；
+- drag region；
+- minimize；
+- maximize / restore；
+- close；
+- Windows DPI；
+- safe area；
+- Window Chrome tests / manual checklist。
+
+不得修改 feature 页面。
+
+### Gate 4
+
+ORCH 合并并验证：
+
+- 主题；
+- keyboard；
+- titlebar；
+- 100/125/150% DPI；
+- Window controls；
+- 现有业务 smoke。
+
+---
+
+# 30.10 Wave 5 — Packaging Cleanup 串行 + QA 并行
+
+负责人：
+
+```text
+DESKTOP-PACKAGING
+QA
+```
+
+DESKTOP-PACKAGING 必须基于已经合入 Window Chrome 的新 base SHA，因为它可能继续修改：
+
+```text
+tauri.conf.json
+src-tauri/src/main.rs
+packaging scripts
+```
+
+任务：
+
+- `core-api/` → `resources/core-api/`；
+- Rust lookup；
+- 可选旧路径兼容；
+- NSIS resource；
+- installer smoke；
+- sidecar health/auth；
+- uninstall；
+- process cleanup。
+
+QA 并行：
+
+- 安装前后目录 diff；
+- GUI smoke；
+- sidecar orphan 检查；
+- fresh profile install；
+- uninstall 保留用户数据策略确认。
+
+### Gate 5
+
+必须满足：
+
+```text
+<install>/
+├── xiaoyue-job-search.exe
+├── uninstall.exe
+└── resources/
+    └── core-api/
+```
+
+且：
+
+- Core 启动；
+- health 200；
+- auth 正常；
+- app 退出无 sidecar；
+- uninstall 成功。
+
+---
+
+# 30.11 Wave 6 — QA / E2E / Visual 最终并行验证
+
+最后由 QA 主导，同时允许各 feature Owner 只修自己领域的问题。
+
+测试并行分组：
+
+### QA-A：Functional E2E
+
+```text
+启动
+→ 首页
+→ 岗位雷达
+→ 筛选
+→ Inspector
+→ Profile
+→ Resume
+→ Settings
+→ Application
+```
+
+### QA-B：Visual Regression
+
+矩阵：
+
+```text
+1024×700
+1280×820
+1440×900
+
+× Light / Dark
+× Sidebar expand / collapse
+```
+
+### QA-C：A11y / Keyboard
+
+- Tab；
+- Shift+Tab；
+- Enter；
+- Escape；
+- Focus restore；
+- Dialog/Sheet trap；
+- reduced motion；
+- forced colors 基础。
+
+### QA-D：Performance
+
+- 1k jobs；
+- 10k synthetic jobs；
+- virtual list DOM 数；
+- Sidebar rerender；
+- initial render；
+- bundle size。
+
+### QA-E：Packaging / Runtime
+
+- clean install；
+- upgrade install（如当前 release 流程支持）；
+- launch；
+- sidecar；
+- exit；
+- uninstall。
+
+---
+
+# 30.12 主智能体 ORCH 的职责
+
+ORCH **不要亲自承担大面积 feature 编码**，否则会成为并行瓶颈。
+
+ORCH 只负责：
+
+1. 给每个 Wave 发布 base SHA；
+2. 创建/指定 branch；
+3. 明确文件 ownership；
+4. 冻结共享契约；
+5. 处理 Shared UI Request；
+6. 审核子智能体 commit；
+7. 合并；
+8. 处理冲突；
+9. 跑 Gate；
+10. 发现回归时把问题退回对应 Owner；
+11. 保证安全 invariant；
+12. 最后合并 `feat/ui-modernization` → `main`。
+
+ORCH 不允许：
+
+- 为了赶进度绕过 test；
+- 让两个 Agent 同时改高冲突文件；
+- 让 Agent 直接 merge main；
+- 在 Gate 未通过时开启下一依赖 Wave；
+- 用大面积 conflict resolution 掩盖设计冲突。
+
+---
+
+# 30.13 子智能体统一任务模板
+
+主智能体发给每个子智能体的任务必须至少包含：
+
+```text
+Role:
+<UI-JOBS / UI-PR / ...>
+
+Base SHA:
+<明确 commit SHA>
+
+Branch:
+<明确 branch>
+
+Owned paths:
+<允许修改的路径>
+
+Read-only paths:
+<可阅读但禁止修改>
+
+Forbidden paths:
+<禁止修改>
+
+Dependencies / Frozen contracts:
+<Freeze A / B / C>
+
+Tasks:
+1.
+2.
+3.
+
+Must preserve:
+- security invariant
+- API semantics
+- confirmed Profile semantics
+- verified Job gate
+...
+
+Required tests:
+<具体命令>
+
+Deliverables:
+- commit SHA
+- changed files
+- test result
+- screenshots if applicable
+- known risks
+- Shared UI Requests
+```
+
+禁止只给一句“把某页面美化一下”。
+
+---
+
+# 30.14 子智能体回报格式
+
+每个子智能体结束时必须回报：
+
+```text
+STATUS: READY_TO_MERGE | BLOCKED | NEEDS_SHARED_CHANGE
+
+BASE_SHA:
+BRANCH:
+HEAD_SHA:
+
+CHANGED_PATHS:
+- ...
+
+TESTS:
+- command: PASS/FAIL
+
+BEHAVIORAL_CHANGES:
+- ...
+
+INVARIANTS_CHECKED:
+- ...
+
+SHARED_UI_REQUESTS:
+- ...
+
+KNOWN_RISKS:
+- ...
+
+SCREENSHOTS:
+- ...
+```
+
+ORCH 只有在 `READY_TO_MERGE` 且测试通过时才允许合并。
+
+---
+
+# 30.15 并行依赖图
+
+```text
+Wave 0
+ORCH ───────────────┐
+QA baseline ────────┘
+         │
+         ▼
+Wave 1
+UI-FOUNDATION
+         │
+   Freeze A
+         ▼
+Wave 2
+UI-SHELL  ║  QA
+         │
+   Freeze B/C
+         ▼
+Wave 3
+┌────────────┬────────────┬────────────┬────────────┐
+│ UI-JOBS    │ UI-DA      │ UI-PR      │ UI-SETTINGS│
+└────────────┴────────────┴────────────┴────────────┘
+         │
+         ▼
+Wave 4
+UI-INTERACTION  ║  DESKTOP-WINDOW
+         │
+         ▼
+Wave 5
+DESKTOP-PACKAGING  ║  QA packaging
+         │
+         ▼
+Wave 6
+Functional E2E
+Visual Regression
+A11y
+Performance
+Packaging Runtime
+         │
+         ▼
+ORCH Final Gate
+         │
+         ▼
+feat/ui-modernization → main
+```
+
+---
+
+# 30.16 最大并发建议
+
+推荐并发上限：
+
+```text
+Wave 0: 2
+Wave 1: 1
+Wave 2: 2
+Wave 3: 4
+Wave 4: 2
+Wave 5: 2
+Wave 6: 4~5（以测试任务为主）
+```
+
+不要为了“子智能体越多越快”把一个页面拆成多个 Agent 同时改。
+
+最适合并行的是**不同 feature 目录**，最不适合并行的是：
+
+- package / lockfile；
+- Design Token；
+- primitive；
+- AppShell；
+- routes；
+- global styles；
+- tauri.conf；
+- Rust main；
+- installer scripts。
+
+---
+
+# 30.17 失败与回滚策略
+
+任何 Wave 出现以下情况必须停止向后推进：
+
+- production build fail；
+- TypeScript fail；
+- Core test regression；
+- session auth regression；
+- Job verified gate regression；
+- Profile confirmed semantics regression；
+- installer smoke regression；
+- sidecar orphan；
+- 主导航不可用。
+
+处理方式：
+
+1. ORCH 定位 Owner；
+2. Owner 在自己的 branch 修复；
+3. 不允许下一个 Wave 用 workaround 掩盖；
+4. 修复后重新跑 Gate；
+5. 仍失败则 revert 对应 Agent merge，不回滚其他已通过的独立 Agent。
+
+---
+
+# 30.18 最终集成顺序
+
+最终不是“所有 Agent 一次性合并”，而是：
+
+```text
+Foundation
+→ Shell
+→ Dashboard/Applications
+→ Profile/Resume
+→ Settings
+→ Jobs
+→ Interaction
+→ Window Chrome
+→ Packaging
+→ QA/E2E
+```
+
+每一步保持 integration branch 始终可构建、可测试、可回滚。
+
+---
+
+# 31. 推荐提交拆分
 
 建议至少：
 
@@ -1413,7 +2333,7 @@ test(ui): add desktop e2e and visual regression
 
 ---
 
-# 31. Definition of Done
+# 32. Definition of Done
 
 本方案完成时必须满足：
 
@@ -1450,7 +2370,7 @@ test(ui): add desktop e2e and visual regression
 
 ---
 
-# 32. 最终目标技术形态
+# 33. 最终目标技术形态
 
 ```text
              小悦求职
