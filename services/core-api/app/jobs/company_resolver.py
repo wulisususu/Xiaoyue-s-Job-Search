@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import Company, CompanyAlias
@@ -39,7 +40,12 @@ def add_company_alias(session: Session, company: Company, alias: str, source_nam
             CompanyAlias.source_name == source_name,
         )
     )
-    if exists is None:
+    if exists is not None:
+        return
+    # Savepoint-confined: a concurrent sync may commit the same alias
+    # between our lookup and this insert; tolerate the loser's outcome.
+    nested = session.begin_nested()
+    try:
         session.add(
             CompanyAlias(
                 company_id=company.id,
@@ -48,11 +54,47 @@ def add_company_alias(session: Session, company: Company, alias: str, source_nam
                 source_name=source_name,
             )
         )
+        session.flush()
+        nested.commit()
+    except IntegrityError:
+        nested.rollback()
 
 
 def add_default_aliases(session: Session, company: Company, source_name: str) -> None:
     for alias in sorted(company_alias_candidates(company.name)):
         add_company_alias(session, company, alias, source_name)
+
+
+def insert_company_or_get_existing(session: Session, company: Company) -> Company:
+    """Insert `company`, or reuse the row a racing sibling created.
+
+    Syncs from different sources can run their lookup before either INSERT
+    commits; on the (normalized_name, ownership) unique index the loser
+    would get IntegrityError and lose a whole sync. Savepoint-confine the
+    insert so the race degrades to "reuse the winner's row".
+
+    IMPORTANT: the aliases must be added by the caller AFTER this returns,
+    so they attach to whichever row actually won the identity race.
+    """
+    nested = session.begin_nested()
+    try:
+        session.add(company)
+        session.flush()
+        nested.commit()
+        return company
+    except IntegrityError:
+        nested.rollback()
+        existing = session.scalars(
+            select(Company)
+            .where(
+                Company.normalized_name == company.normalized_name,
+                Company.ownership == company.ownership,
+            )
+            .order_by(Company.id)
+        ).all()
+        if not existing:
+            raise
+        return existing[0]
 
 
 def resolve_company_detailed(session: Session, name: str, *, create_unknown: bool = False) -> CompanyResolution:
@@ -84,9 +126,10 @@ def resolve_company_detailed(session: Session, name: str, *, create_unknown: boo
     if not create_unknown:
         return CompanyResolution(None, NOT_FOUND)
 
-    company = Company(name=name.strip(), normalized_name=normalized, ownership="unknown")
-    session.add(company)
-    session.flush()
+    company = insert_company_or_get_existing(
+        session,
+        Company(name=name.strip(), normalized_name=normalized, ownership="unknown"),
+    )
     add_default_aliases(session, company, "runtime")
     session.flush()
     return CompanyResolution(company, RESOLVED)
