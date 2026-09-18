@@ -19,6 +19,18 @@ from .routes.sources import router as sources_router
 from .routes.verification import router as verification_router
 
 
+# Frontend origins: the dev server (vite on 1420) and the packaged webviews.
+# Windows WebView2 serves the frontend from https://tauri.localhost (older
+# builds http), macOS/Linux WKWebView from tauri://localhost.
+_ALLOWED_ORIGINS = {
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+}
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     init_db(settings)
@@ -33,7 +45,7 @@ def create_app() -> FastAPI:
     application = FastAPI(title=settings.app_name, version="0.1.0")
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:1420", "tauri://localhost"],
+        allow_origins=sorted(_ALLOWED_ORIGINS),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*", "Authorization"],
@@ -55,10 +67,15 @@ def create_app() -> FastAPI:
         async def _require_session_token(request, call_next):
             path = request.url.path
             if path.startswith("/api/") and path != "/api/health":
+                # CORS preflight (OPTIONS + Access-Control-Request-Method)
+                # never carries Authorization by design; hand it to
+                # CORSMiddleware, which only answers for allowed origins.
+                if request.method == "OPTIONS" and "access-control-request-method" in request.headers:
+                    return await call_next(request)
                 if not _host_allowed(request.headers.get("host")):
                     return JSONResponse(status_code=403, content={"detail": "invalid host"})
                 origin = request.headers.get("origin")
-                if origin and origin not in {"http://localhost:1420", "http://127.0.0.1:1420", "tauri://localhost"}:
+                if origin and origin not in _ALLOWED_ORIGINS:
                     return JSONResponse(status_code=403, content={"detail": "invalid origin"})
                 provided = request.headers.get("authorization", "")
                 if not hmac.compare_digest(provided, expected):
