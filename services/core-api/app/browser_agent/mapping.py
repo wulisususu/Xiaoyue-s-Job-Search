@@ -95,12 +95,23 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").strip().lower())
 
 
+_COLLECTION_PATH_RE = re.compile(r"collections\.([a-z_]+)\[(\d+)]\.([a-z_]+)")
+
+
+def _collection_template(path: str) -> tuple[str, str] | None:
+    match = _COLLECTION_PATH_RE.fullmatch(path)
+    if not match:
+        return None
+    kind, _index_text, field = match.groups()
+    return kind, field
+
+
 def _source_value(snapshot: ConfirmedProfileSnapshot, path: str) -> Any | None:
     if not path.startswith("collections."):
         value = snapshot.scalars.get(path)
         return value if value not in (None, "", []) else None
 
-    match = re.fullmatch(r"collections\.([a-z_]+)\[(\d+)]\.([a-z_]+)", path)
+    match = _COLLECTION_PATH_RE.fullmatch(path)
     if not match:
         return None
     kind, index_text, field = match.groups()
@@ -110,6 +121,46 @@ def _source_value(snapshot: ConfirmedProfileSnapshot, path: str) -> Any | None:
         return None
     value = items[index].get(field)
     return value if value not in (None, "", []) else None
+
+
+def _resolve_rule_source(
+    snapshot: ConfirmedProfileSnapshot,
+    rule: _Rule,
+    collection_offsets: dict[tuple[str, str], int],
+) -> tuple[str, Any, tuple[str, str] | None] | None:
+    collection_source = next(
+        ((path, template) for path in rule.source_paths if (template := _collection_template(path)) is not None),
+        None,
+    )
+
+    if collection_source is not None:
+        path, (kind, field) = collection_source
+        key = (kind, field)
+        index = collection_offsets.get(key, 0)
+        indexed_path = re.sub(r"\[\d+\]", f"[{index}]", path, count=1)
+        value = _source_value(snapshot, indexed_path)
+        if value is not None:
+            return indexed_path, value, key
+
+        # Once a repeated collection field advances past index 0, never fall
+        # back to the scalar summary: duplicating the first education/work
+        # record into later rows is worse than leaving the later row unmatched.
+        if index > 0:
+            return None
+
+        for fallback_path in rule.source_paths:
+            if _collection_template(fallback_path) is not None:
+                continue
+            fallback = _source_value(snapshot, fallback_path)
+            if fallback is not None:
+                return fallback_path, fallback, key
+        return None
+
+    for source_path in rule.source_paths:
+        value = _source_value(snapshot, source_path)
+        if value is not None:
+            return source_path, value, None
+    return None
 
 
 def _field_text(field: FormFieldDescriptor) -> tuple[str, str]:
@@ -187,23 +238,25 @@ def build_fill_plan(
         page_url=scan.url,
     )
 
+    collection_offsets: dict[tuple[str, str], int] = {}
+
     for field in scan.fields:
         input_type = (field.input_type or field.tag or "text").lower()
         if field.disabled or field.readonly or input_type in _BLOCKED_TYPES:
             plan.blocked.append(_summary(field))
             continue
 
-        candidates: list[tuple[float, str, str, Any]] = []
+        candidates: list[tuple[float, str, str, Any, tuple[str, str] | None]] = []
         for rule in _RULES:
             scored = _rule_score(field, rule)
             if scored is None:
                 continue
+            resolved = _resolve_rule_source(snapshot, rule, collection_offsets)
+            if resolved is None:
+                continue
             score, alias = scored
-            for source_path in rule.source_paths:
-                value = _source_value(snapshot, source_path)
-                if value is not None:
-                    candidates.append((score, alias, source_path, value))
-                    break
+            source_path, value, collection_key = resolved
+            candidates.append((score, alias, source_path, value, collection_key))
 
         if not candidates:
             plan.unmatched.append(_summary(field))
@@ -215,7 +268,9 @@ def build_fill_plan(
             plan.unmatched.append(_summary(field))
             continue
 
-        score, alias, source_path, value = top
+        score, alias, source_path, value, collection_key = top
+        if collection_key is not None:
+            collection_offsets[collection_key] = collection_offsets.get(collection_key, 0) + 1
         control_needs_confirmation = field.tag.lower() == "select" or input_type in {"radio", "checkbox"}
         plan.items.append(
             FillPlanItem(

@@ -78,3 +78,47 @@ def test_sensitive_and_submit_controls_are_never_fillable():
     plan = build_fill_plan(snapshot, scan)
     assert [item.field_id for item in plan.items] == ["name"]
     assert {item.field_id for item in plan.blocked} == {"password", "file", "submit"}
+
+
+def test_repeated_collection_fields_advance_by_occurrence_and_never_duplicate_first_record():
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={
+            "education.school": "三江学院",
+            "education.major": "视觉传达设计",
+        },
+        collections={
+            "education": [
+                {"school": "三江学院", "major": "视觉传达设计"},
+                {"school": "南京艺术学院", "major": "数字媒体"},
+            ],
+        },
+    )
+    scan = FormScan(
+        url="https://ats.example.com/apply",
+        title="网申",
+        fields=[
+            field("school-1", "学校", section="教育经历"),
+            field("major-1", "专业", section="教育经历"),
+            field("school-2", "学校", section="教育经历"),
+            field("major-2", "专业", section="教育经历"),
+            field("school-3", "学校", section="教育经历"),
+        ],
+    )
+
+    plan = build_fill_plan(snapshot, scan)
+    mapped = {item.field_id: item for item in plan.items}
+
+    assert (mapped["school-1"].value, mapped["school-1"].source_path) == (
+        "三江学院", "collections.education[0].school"
+    )
+    assert (mapped["major-1"].value, mapped["major-1"].source_path) == (
+        "视觉传达设计", "collections.education[0].major"
+    )
+    assert (mapped["school-2"].value, mapped["school-2"].source_path) == (
+        "南京艺术学院", "collections.education[1].school"
+    )
+    assert (mapped["major-2"].value, mapped["major-2"].source_path) == (
+        "数字媒体", "collections.education[1].major"
+    )
+    assert "school-3" not in mapped
+    assert "school-3" in {item.field_id for item in plan.unmatched}
