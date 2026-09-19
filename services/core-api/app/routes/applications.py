@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +18,7 @@ ALLOWED_STATUSES = {"OPENED", "IN_PROGRESS", "SUBMITTED", "INTERVIEWING", "OFFER
 
 class ApplicationStart(BaseModel):
     job_id: str = Field(min_length=1)
+    channel: Literal["manual", "browser_agent"] = "manual"
 
 
 class ApplicationStatusUpdate(BaseModel):
@@ -67,14 +70,18 @@ def start_application(body: ApplicationStart) -> ApplicationRead:
 
             existing = session.scalar(
                 select(ApplicationSession)
-                .where(ApplicationSession.job_id == job.id, ApplicationSession.status == "OPENED")
+                .where(
+                    ApplicationSession.job_id == job.id,
+                    ApplicationSession.status == "OPENED",
+                    ApplicationSession.channel == body.channel,
+                )
                 .order_by(ApplicationSession.id.desc())
                 .limit(1)
             )
             if existing is not None:
                 return _read(session, existing)
 
-            record = ApplicationSession(job_id=job.id, opened_url=entry_url)
+            record = ApplicationSession(job_id=job.id, opened_url=entry_url, channel=body.channel)
             session.add(record)
             session.commit()
             session.refresh(record)

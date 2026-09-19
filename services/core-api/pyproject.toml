@@ -17,7 +17,8 @@ dependencies = [
   "python-docx>=1.1",
   "python-multipart>=0.0.9",
   "httpx>=0.27",
-  "keyring>=25"
+  "keyring>=25",
+  "websockets>=17"
 ]
 
 [project.optional-dependencies]
