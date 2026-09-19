@@ -87,3 +87,18 @@ def test_application_status_timeline_updates(client):
 
     listing = client.get("/api/applications").json()
     assert [item["status"] for item in listing] == ["SUBMITTED"]
+
+
+def test_browser_agent_application_channel_is_separate_from_manual_session(client):
+    _seed_verified_job()
+    manual = client.post("/api/applications", json={"job_id": "job-apply"}).json()
+    agent = client.post("/api/applications", json={"job_id": "job-apply", "channel": "browser_agent"})
+
+    assert agent.status_code == 200
+    payload = agent.json()
+    assert payload["channel"] == "browser_agent"
+    assert payload["id"] != manual["id"]
+
+    repeated = client.post("/api/applications", json={"job_id": "job-apply", "channel": "browser_agent"})
+    assert repeated.status_code == 200
+    assert repeated.json()["id"] == payload["id"]
