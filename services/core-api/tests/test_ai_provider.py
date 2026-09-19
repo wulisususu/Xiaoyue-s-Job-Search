@@ -1,6 +1,8 @@
 import pytest
 
-from app.ai.provider import chat_completions_url, normalize_base_url
+import httpx
+
+from app.ai.provider import chat_completions_url, normalize_base_url, probe_provider
 from app.models import Base
 
 
@@ -48,3 +50,26 @@ def test_provider_base_url_is_normalized_and_chat_endpoint_is_stable():
 def test_provider_base_url_rejects_unsafe_or_ambiguous_values(value):
     with pytest.raises(ValueError):
         normalize_base_url(value)
+
+
+def test_provider_probe_uses_openai_chat_shape_and_authorization_header():
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["authorization"] = request.headers.get("Authorization")
+        captured["body"] = request.read().decode("utf-8")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+
+    result = probe_provider(
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        api_key="sk-secret",
+        model="glm-4.7",
+        timeout_seconds=30,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.status_code == 200
+    assert captured["url"] == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    assert captured["authorization"] == "Bearer sk-secret"
+    assert '"model":"glm-4.7"' in str(captured["body"])

@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..ai.errors import ProviderError
+from ..ai.errors import ProviderError, ProviderTimeoutError
 from ..ai.openai_compatible import OpenAICompatibleExtractionProvider
-from ..ai.provider import normalize_base_url
+from ..ai.provider import normalize_base_url, probe_provider
 from ..ai.secrets import (
     DEFAULT_AI_API_KEY_REF,
     CredentialStoreUnavailableError,
@@ -218,6 +218,50 @@ def delete_provider_api_key() -> AIProviderRead:
                     pass
             session.refresh(config)
             return _provider_read(config)
+    finally:
+        engine.dispose()
+
+
+class AIProviderTestRead(BaseModel):
+    ok: bool
+    provider_name: str
+    model: str
+    latency_ms: int
+
+
+@router.post("/provider/test", response_model=AIProviderTestRead)
+def test_provider_connection() -> AIProviderTestRead:
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            config = session.get(AIProviderConfig, "default")
+            if config is None:
+                raise HTTPException(status_code=409, detail="Configure the AI provider before testing the connection")
+            if not config.secret_ref:
+                raise HTTPException(status_code=409, detail="Save an AI provider API key before testing the connection")
+            try:
+                api_key = get_secret_store().get_secret(config.secret_ref)
+            except CredentialStoreUnavailableError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            if not api_key:
+                raise HTTPException(status_code=409, detail="Save an AI provider API key before testing the connection")
+            try:
+                result = probe_provider(
+                    base_url=config.base_url,
+                    api_key=api_key,
+                    model=config.text_model,
+                    timeout_seconds=config.timeout_seconds,
+                )
+            except ProviderTimeoutError as exc:
+                raise HTTPException(status_code=504, detail=str(exc)) from exc
+            except ProviderError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            return AIProviderTestRead(
+                ok=True,
+                provider_name=config.provider_name,
+                model=config.text_model,
+                latency_ms=result.latency_ms,
+            )
     finally:
         engine.dispose()
 

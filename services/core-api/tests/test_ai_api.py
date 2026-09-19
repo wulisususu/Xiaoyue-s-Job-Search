@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.ai.provider import ProviderProbeResult
 from app.ai.secrets import DEFAULT_AI_API_KEY_REF, CredentialStoreUnavailableError
 from app.config import get_settings
 from app.db import get_engine
@@ -160,3 +161,41 @@ def test_invalid_provider_configuration_is_rejected(client, monkeypatch):
 
     bad_timeout = client.put("/api/ai/provider", json={**PROVIDER_PAYLOAD, "timeout_seconds": 1})
     assert bad_timeout.status_code == 422
+
+
+def test_provider_connection_test_uses_saved_secret_without_echoing_it(client, monkeypatch):
+    store = MemorySecretStore()
+    monkeypatch.setattr(ai_routes, "get_secret_store", lambda: store)
+    assert client.put("/api/ai/provider", json=PROVIDER_PAYLOAD).status_code == 200
+    secret = "sk-probe-secret"
+    assert client.put("/api/ai/provider/api-key", json={"api_key": secret}).status_code == 200
+
+    captured: dict[str, object] = {}
+
+    def fake_probe_provider(**kwargs):
+        captured.update(kwargs)
+        return ProviderProbeResult(status_code=200, latency_ms=17)
+
+    monkeypatch.setattr(ai_routes, "probe_provider", fake_probe_provider)
+    response = client.post("/api/ai/provider/test")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "provider_name": "OpenAI Compatible",
+        "model": "reasoning-model",
+        "latency_ms": 17,
+    }
+    assert captured["base_url"] == "https://example.com/v1"
+    assert captured["api_key"] == secret
+    assert secret not in response.text
+
+
+def test_provider_connection_test_requires_provider_and_key(client, monkeypatch):
+    store = MemorySecretStore()
+    monkeypatch.setattr(ai_routes, "get_secret_store", lambda: store)
+
+    assert client.post("/api/ai/provider/test").status_code == 409
+    assert client.put("/api/ai/provider", json=PROVIDER_PAYLOAD).status_code == 200
+    response = client.post("/api/ai/provider/test")
+    assert response.status_code == 409

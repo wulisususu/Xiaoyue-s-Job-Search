@@ -1,5 +1,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
+import { createExtractionRun } from '../api/aiClient';
 import { getResumes, importResume, type ResumeVersion } from '../api/resumesClient';
 
 function formatBytes(bytes: number): string {
@@ -43,6 +45,7 @@ export function ResumesPage() {
   const [resumes, setResumes] = useState<ResumeVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [extractingResumeId, setExtractingResumeId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -78,6 +81,26 @@ export function ResumesPage() {
     } finally {
       setImporting(false);
       event.target.value = '';
+    }
+  }
+
+  async function handleAIExtraction(resume: ResumeVersion) {
+    setExtractingResumeId(resume.id);
+    setError(null);
+    setMessage(null);
+    try {
+      const run = await createExtractionRun(resume.id);
+      if (run.status !== 'SUCCEEDED') {
+        throw new Error(run.error || 'AI 提取运行失败');
+      }
+      const total = run.scalar_draft_count + run.collection_draft_count;
+      const refreshed = await getResumes();
+      setResumes(refreshed);
+      setMessage(`AI 解析完成，已生成 ${total} 项资料候选；请前往“我的资料”审核后再进入正式 Profile。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'AI 解析资料失败');
+    } finally {
+      setExtractingResumeId(null);
     }
   }
 
@@ -144,7 +167,20 @@ export function ResumesPage() {
                   <p className="resume-note error-note">解析失败{resume.extraction_error ? `：${resume.extraction_error}` : '，请检查文件是否损坏。'}</p>
                 )}
                 {resume.extraction_status === 'EXTRACTED' && resume.pending_draft_count === 0 && (
-                  <p className="resume-note">文本已提取，当前没有待审核的结构化资料候选。</p>
+                  <p className="resume-note">文本已提取，可调用已配置的 AI Provider 生成资料候选；未经审核不会写入正式 Profile。</p>
+                )}
+                {resume.extraction_status === 'EXTRACTED' && (
+                  <div className="resume-card-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={extractingResumeId !== null}
+                      onClick={() => handleAIExtraction(resume)}
+                      type="button"
+                    >
+                      {extractingResumeId === resume.id ? 'AI 解析中…' : 'AI 解析资料'}
+                    </button>
+                    {resume.pending_draft_count > 0 && <Link className="secondary-button" to="/profile">审核候选</Link>}
+                  </div>
                 )}
               </div>
             </article>
