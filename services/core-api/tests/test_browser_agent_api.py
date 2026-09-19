@@ -47,6 +47,14 @@ class FakeBrowserAgentManager:
             blocked=[],
         )
 
+    def augment_plan_with_ai(self, session_id: str, plan_token: str):
+        assert session_id == "agent-1"
+        assert plan_token == "plan-1"
+        plan = self.build_plan(session_id)
+        plan.token = "plan-ai"
+        plan.items[0].requires_confirmation = True
+        return plan
+
     def fill(self, session_id: str, plan_token: str, field_ids: list[str]):
         self.filled = (session_id, plan_token, field_ids)
         return {"filled_count": len(field_ids), "skipped_count": 0, "status": "FILLED"}
@@ -98,6 +106,14 @@ def test_browser_agent_api_exposes_plan_then_fills_only_approved_plan_fields(cli
     payload = plan.json()
     assert payload["items"][0]["source_path"] == "identity.name"
     assert payload["items"][0]["value"] == "赵新悦"
+
+    semantic = client.post(
+        "/api/browser-agent/sessions/agent-1/semantic-plan",
+        json={"plan_token": "plan-1"},
+    )
+    assert semantic.status_code == 200
+    assert semantic.json()["token"] == "plan-ai"
+    assert semantic.json()["items"][0]["requires_confirmation"] is True
 
     filled = client.post(
         "/api/browser-agent/sessions/agent-1/fill",

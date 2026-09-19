@@ -52,6 +52,17 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     if (url.endsWith('/api/browser-agent/sessions/agent-1/plan')) {
       return Promise.resolve(new Response(JSON.stringify(plan), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
+    if (url.endsWith('/api/browser-agent/sessions/agent-1/semantic-plan')) {
+      return Promise.resolve(new Response(JSON.stringify({
+        ...plan,
+        token: 'plan-ai',
+        items: [
+          ...plan.items,
+          { field_id: 'f-contact', label: '紧急联系人', control_type: 'text', value: '未提供', source_path: 'identity.name', confidence: 0.55, reason: 'AI suggestion', requires_confirmation: true },
+        ],
+        unmatched: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.endsWith('/api/browser-agent/sessions/agent-1/fill')) {
       return Promise.resolve(new Response(JSON.stringify({ filled_count: 1, skipped_count: 0, status: 'FILLED' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
@@ -68,6 +79,14 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
   expect(screen.getByText('location.hukou')).toBeInTheDocument();
   expect(screen.getByText(/紧急联系人/)).toBeInTheDocument();
   expect(screen.getByText(/不会点击提交按钮/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'AI 补全未匹配' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'AI 补全未匹配' }));
+  await waitFor(() => expect(screen.getByText('identity.name', { selector: 'code' })).toBeInTheDocument());
+
+  const aiCall = calls.find((call) => call.url.endsWith('/api/browser-agent/sessions/agent-1/semantic-plan'));
+  expect(aiCall).toBeDefined();
+  expect(JSON.parse(String(aiCall!.init?.body))).toEqual({ plan_token: 'plan-1' });
 
   const nameBox = screen.getByRole('checkbox', { name: /姓名/ }) as HTMLInputElement;
   const originBox = screen.getByRole('checkbox', { name: /生源地/ }) as HTMLInputElement;
