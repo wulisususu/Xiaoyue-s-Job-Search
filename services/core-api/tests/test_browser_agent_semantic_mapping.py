@@ -192,3 +192,18 @@ def test_semantic_provider_candidates_exclude_sensitive_profile_values():
     assert candidates["identity.name"] == "测试用户"
     assert "identity.id_number" not in candidates
     assert "TESTDOC-ABC1234" not in str(candidates)
+
+
+def test_semantic_provider_candidates_exclude_political_status_as_sensitive():
+    from app.browser_agent.semantic_mapping import flatten_confirmed_snapshot
+
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={
+            "identity.name": "测试用户",
+            "identity.political_status": "测试敏感值",
+        },
+        collections={},
+    )
+    candidates = flatten_confirmed_snapshot(snapshot)
+    assert candidates == {"identity.name": "测试用户"}
+    assert "测试敏感值" not in str(candidates)
