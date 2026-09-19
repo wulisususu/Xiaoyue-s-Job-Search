@@ -14,6 +14,7 @@ from .models import (
     FormScan,
     PlanFieldSummary,
 )
+from .value_normalization import normalize_value_for_control
 
 _BLOCKED_TYPES = {"hidden", "password", "file", "submit", "button", "reset", "image", "checkbox"}
 _HIGH_CONFIDENCE = 0.92
@@ -292,6 +293,12 @@ def build_fill_plan(
         score, alias, source_path, value, collection_key = top
         if collection_key is not None:
             collection_offsets[collection_key] = collection_offsets.get(collection_key, 0) + 1
+
+        normalized_value = normalize_value_for_control(source_path, value, field)
+        if normalized_value is None:
+            plan.unmatched.append(_summary(field))
+            continue
+
         source_sensitive = False
         if not source_path.startswith("collections."):
             try:
@@ -308,7 +315,7 @@ def build_fill_plan(
                 field_id=field.field_id,
                 label=field.label or field.aria_label or field.placeholder or field.name or field.field_id,
                 control_type=input_type,
-                value=value,
+                value=normalized_value,
                 source_path=source_path,
                 confidence=score,
                 reason=alias,

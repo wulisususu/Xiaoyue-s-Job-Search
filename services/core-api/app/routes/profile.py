@@ -35,7 +35,7 @@ from ..profile.collection_service import (
     update_collection_item,
 )
 from ..profile.collections import COLLECTION_REGISTRY, get_collection_definition
-from ..profile.registry import FIELD_REGISTRY, get_field_definition
+from ..profile.registry import FIELD_REGISTRY, get_field_definition, mask_profile_value
 from ..profile.service import (
     ProfileDraftAlreadyReviewedError,
     ProfileDraftNotFoundError,
@@ -165,11 +165,17 @@ class ProfileCollectionDeleteRead(BaseModel):
 
 def _field_read(field: ProfileField) -> ProfileFieldRead:
     definition = get_field_definition(field.field_key)
+    stored_value = json.loads(field.value_json)
+    public_value = (
+        mask_profile_value(field.field_key, stored_value)
+        if definition.sensitive
+        else stored_value
+    )
     return ProfileFieldRead(
         field_key=field.field_key,
         label=definition.label,
         category=definition.category,
-        value=json.loads(field.value_json),
+        value=public_value,
         value_type=field.value_type,
         source_type=field.source_type,
         source_ref=field.source_ref,
@@ -186,6 +192,12 @@ def _draft_read(session: Session, draft: ProfileDraftField) -> ProfileDraftRead:
     if resume is None:
         raise HTTPException(status_code=500, detail="Profile draft references a missing resume version")
     definition = get_field_definition(draft.field_key)
+    stored_value = json.loads(draft.value_json)
+    public_value = (
+        mask_profile_value(draft.field_key, stored_value)
+        if definition.sensitive
+        else stored_value
+    )
     return ProfileDraftRead(
         id=draft.id,
         resume_version_id=draft.resume_version_id,
@@ -195,7 +207,7 @@ def _draft_read(session: Session, draft: ProfileDraftField) -> ProfileDraftRead:
         field_key=draft.field_key,
         label=definition.label,
         category=definition.category,
-        value=json.loads(draft.value_json),
+        value=public_value,
         value_type=draft.value_type,
         confidence=draft.confidence,
         extractor_name=draft.extractor_name,
@@ -207,13 +219,22 @@ def _draft_read(session: Session, draft: ProfileDraftField) -> ProfileDraftRead:
 
 def _revision_read(revision: ProfileFieldRevision) -> ProfileRevisionRead:
     definition = get_field_definition(revision.field_key)
+    old_value = json.loads(revision.old_value_json) if revision.old_value_json is not None else None
+    new_value = json.loads(revision.new_value_json)
+    if definition.sensitive:
+        old_value = (
+            mask_profile_value(revision.field_key, old_value)
+            if old_value is not None
+            else None
+        )
+        new_value = mask_profile_value(revision.field_key, new_value)
     return ProfileRevisionRead(
         id=revision.id,
         field_key=revision.field_key,
         label=definition.label,
         category=definition.category,
-        old_value=json.loads(revision.old_value_json) if revision.old_value_json is not None else None,
-        new_value=json.loads(revision.new_value_json),
+        old_value=old_value,
+        new_value=new_value,
         value_type=revision.value_type,
         source_type=revision.source_type,
         source_ref=revision.source_ref,
