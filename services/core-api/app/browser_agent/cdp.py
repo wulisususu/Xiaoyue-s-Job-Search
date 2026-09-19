@@ -76,9 +76,18 @@ def find_browser_binary() -> Path:
 _SCAN_SCRIPT = r"""
 (() => {
   const text = (value) => (value || '').replace(/\s+/g, ' ').trim();
+  const normalize = (value) => text(value).toLowerCase();
+  const ensureId = (el, suffix) => {
+    if (!el.dataset.xiaoyueAgentId) {
+      el.dataset.xiaoyueAgentId =
+        'xy-' + Date.now().toString(36) + '-' + String(suffix) + '-' + Math.random().toString(36).slice(2, 8);
+    }
+    return el.dataset.xiaoyueAgentId;
+  };
   const labelFor = (el) => {
+    if (!el) return '';
     if (el.labels && el.labels.length) return text(Array.from(el.labels).map((x) => x.innerText).join(' '));
-    const wrapped = el.closest('label');
+    const wrapped = el.closest && el.closest('label');
     if (wrapped) return text(wrapped.innerText);
     if (el.id) {
       try {
@@ -86,41 +95,174 @@ _SCAN_SCRIPT = r"""
         if (label) return text(label.innerText);
       } catch (_) {}
     }
-    const parent = el.parentElement;
-    if (parent) {
-      const nearby = parent.querySelector('.label,.form-label,[class*="label"],dt,th');
-      if (nearby) return text(nearby.innerText);
-    }
     return '';
   };
+  const formLabelFor = (el) => {
+    if (!el) return '';
+    const container = el.closest && el.closest(
+      '.ant-form-item,.el-form-item,.form-item,.form-field,.field,[class*="form-item"],[class*="formItem"]'
+    );
+    if (!container) return labelFor(el);
+    const candidates = Array.from(container.querySelectorAll(
+      '.ant-form-item-label label,.el-form-item__label,.form-label,[class*="label"],label,dt,th'
+    ));
+    const candidate = candidates.find((node) => !el.contains(node) && text(node.innerText));
+    return candidate ? text(candidate.innerText) : labelFor(el);
+  };
   const sectionFor = (el) => {
-    const fieldset = el.closest('fieldset');
+    if (!el) return '';
+    const fieldset = el.closest && el.closest('fieldset');
     if (fieldset) {
       const legend = fieldset.querySelector('legend');
       if (legend) return text(legend.innerText);
     }
     let node = el.parentElement;
     for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) {
-      const heading = node.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > .title,:scope > [class*="title"]');
+      const heading = node.querySelector(
+        ':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > .title,:scope > [class*="title"]'
+      );
       if (heading) return text(heading.innerText);
     }
     return '';
   };
-  const nodes = Array.from(document.querySelectorAll('input,select,textarea'));
-  const fields = nodes.map((el, index) => {
-    if (!el.dataset.xiaoyueAgentId) {
-      el.dataset.xiaoyueAgentId = 'xy-' + Date.now().toString(36) + '-' + index.toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  const optionText = (radio) => {
+    const labelled = labelFor(radio);
+    return labelled || text(radio.value);
+  };
+  const fields = [];
+  const consumed = new Set();
+
+  // Native + Ant Design + Element Plus radio groups are represented as one
+  // logical control. Every member receives the same stable agent id.
+  const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
+  const radioGroups = new Map();
+  radios.forEach((radio, index) => {
+    const root = radio.closest('[role="radiogroup"],.ant-radio-group,.el-radio-group,fieldset');
+    const name = radio.getAttribute('name') || '';
+    let key;
+    if (root) {
+      key = 'root:' + ensureId(root, 'rg-' + index);
+    } else if (name) {
+      key = 'name:' + name;
+    } else {
+      key = 'single:' + index;
     }
+    if (!radioGroups.has(key)) radioGroups.set(key, { root, radios: [] });
+    radioGroups.get(key).radios.push(radio);
+  });
+
+  let radioIndex = 0;
+  for (const group of radioGroups.values()) {
+    const members = group.radios;
+    if (!members.length) continue;
+    const root = group.root || members[0].parentElement || members[0];
+    const fieldId = ensureId(root, 'radio-' + radioIndex++);
+    root.dataset.xiaoyueControlType = 'radio_group';
+    members.forEach((radio) => {
+      radio.dataset.xiaoyueAgentId = fieldId;
+      radio.dataset.xiaoyueControlType = 'radio_group';
+      consumed.add(radio);
+    });
+    fields.push({
+      field_id: fieldId,
+      tag: 'radio_group',
+      input_type: 'radio_group',
+      label: formLabelFor(root) || formLabelFor(members[0]),
+      name: members[0].getAttribute('name') || '',
+      placeholder: '',
+      aria_label: root.getAttribute('aria-label') || '',
+      section: sectionFor(root),
+      required: members.some((radio) => Boolean(radio.required || radio.getAttribute('aria-required') === 'true')),
+      options: members.map(optionText).filter(Boolean),
+      disabled: members.every((radio) => Boolean(radio.disabled)),
+      readonly: false,
+    });
+  }
+
+  const nodes = Array.from(document.querySelectorAll('input,select,textarea,[role="combobox"]'));
+  nodes.forEach((el, index) => {
+    if (consumed.has(el)) return;
     const tag = el.tagName.toLowerCase();
-    const inputType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : tag;
+    const nativeType = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : tag;
+
+    const frameworkCombo = el.closest && el.closest('.ant-select,.el-select');
+    const ariaCombo = el.getAttribute('role') === 'combobox'
+      ? el
+      : (el.closest && el.closest('[role="combobox"]'));
+    const comboRoot = tag !== 'select' ? (frameworkCombo || ariaCombo) : null;
+    if (comboRoot) {
+      if (consumed.has(comboRoot)) return;
+      consumed.add(comboRoot);
+      const inner = comboRoot.matches('input') ? comboRoot : comboRoot.querySelector('input,[role="combobox"]');
+      if (inner) consumed.add(inner);
+      const fieldId = ensureId(comboRoot, 'combo-' + index);
+      comboRoot.dataset.xiaoyueControlType = 'combobox';
+      if (inner) {
+        inner.dataset.xiaoyueAgentId = fieldId;
+        inner.dataset.xiaoyueControlType = 'combobox';
+      }
+      const controlsId = (inner && inner.getAttribute('aria-controls')) || comboRoot.getAttribute('aria-controls');
+      const listbox = controlsId ? document.getElementById(controlsId) : null;
+      const optionNodes = listbox
+        ? Array.from(listbox.querySelectorAll('[role="option"],.ant-select-item-option,.el-select-dropdown__item'))
+        : [];
+      fields.push({
+        field_id: fieldId,
+        tag: comboRoot.tagName.toLowerCase(),
+        input_type: 'combobox',
+        label: formLabelFor(comboRoot) || formLabelFor(inner),
+        name: (inner && inner.getAttribute('name')) || comboRoot.getAttribute('name') || '',
+        placeholder: (inner && inner.getAttribute('placeholder')) || '',
+        aria_label: (inner && inner.getAttribute('aria-label')) || comboRoot.getAttribute('aria-label') || '',
+        section: sectionFor(comboRoot),
+        required: Boolean(
+          (inner && (inner.required || inner.getAttribute('aria-required') === 'true'))
+          || comboRoot.getAttribute('aria-required') === 'true'
+        ),
+        options: optionNodes.map((node) => text(node.innerText || node.textContent)).filter(Boolean),
+        disabled: Boolean(
+          (inner && inner.disabled)
+          || comboRoot.getAttribute('aria-disabled') === 'true'
+          || comboRoot.classList.contains('ant-select-disabled')
+          || comboRoot.classList.contains('is-disabled')
+        ),
+        readonly: false,
+      });
+      return;
+    }
+
+    const dateRoot = el.closest && el.closest('.ant-picker,.el-date-editor');
+    if (tag === 'input' && dateRoot) {
+      const fieldId = ensureId(el, 'date-' + index);
+      el.dataset.xiaoyueControlType = 'date_picker';
+      fields.push({
+        field_id: fieldId,
+        tag: 'input',
+        input_type: 'date_picker',
+        label: formLabelFor(dateRoot) || formLabelFor(el),
+        name: el.getAttribute('name') || '',
+        placeholder: el.getAttribute('placeholder') || '',
+        aria_label: el.getAttribute('aria-label') || '',
+        section: sectionFor(dateRoot),
+        required: Boolean(el.required || el.getAttribute('aria-required') === 'true'),
+        options: [],
+        disabled: Boolean(el.disabled || dateRoot.classList.contains('ant-picker-disabled') || dateRoot.classList.contains('is-disabled')),
+        readonly: false,
+      });
+      consumed.add(el);
+      return;
+    }
+
+    const fieldId = ensureId(el, index);
+    el.dataset.xiaoyueControlType = nativeType;
     const options = tag === 'select'
       ? Array.from(el.options || []).map((option) => text(option.textContent || option.value)).filter(Boolean)
       : [];
-    return {
-      field_id: el.dataset.xiaoyueAgentId,
+    fields.push({
+      field_id: fieldId,
       tag,
-      input_type: inputType,
-      label: labelFor(el),
+      input_type: nativeType,
+      label: formLabelFor(el),
       name: el.getAttribute('name') || '',
       placeholder: el.getAttribute('placeholder') || '',
       aria_label: el.getAttribute('aria-label') || '',
@@ -129,8 +271,9 @@ _SCAN_SCRIPT = r"""
       options,
       disabled: Boolean(el.disabled),
       readonly: Boolean(el.readOnly),
-    };
+    });
   });
+
   return { url: location.href, title: document.title || '', fields };
 })()
 """
@@ -277,42 +420,134 @@ class EdgeBrowserBackend:
     def fill(self, handle: EdgeHandle, values: dict[str, Any]) -> dict[str, int]:
         encoded = json.dumps(values, ensure_ascii=False)
         script = f"""
-(() => {{
+(async () => {{
   const updates = {encoded};
   let filled = 0;
   let skipped = 0;
-  const blocked = new Set(['hidden','password','file','submit','button','reset','image']);
+  const blocked = new Set(['hidden','password','file','submit','button','reset','image','checkbox']);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const text = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+  const normalize = (value) => text(value).toLowerCase();
+  const isVisible = (el) => Boolean(el && (el.getClientRects().length || el.offsetParent !== null));
+  const labelledText = (el) => {{
+    if (!el) return '';
+    if (el.labels && el.labels.length) return text(Array.from(el.labels).map((x) => x.innerText).join(' '));
+    const wrapped = el.closest && el.closest('label');
+    return wrapped ? text(wrapped.innerText) : text(el.value);
+  }};
   const setNativeValue = (el, value) => {{
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
     if (descriptor && descriptor.set) descriptor.set.call(el, value);
     else el.value = value;
   }};
-  for (const [fieldId, rawValue] of Object.entries(updates)) {{
-    const el = Array.from(document.querySelectorAll('[data-xiaoyue-agent-id]'))
-      .find((node) => node.dataset.xiaoyueAgentId === fieldId);
-    if (!el || el.disabled || el.readOnly) {{ skipped += 1; continue; }}
-    const tag = el.tagName.toLowerCase();
-    const type = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : tag;
-    if (blocked.has(type) || type === 'checkbox' || type === 'radio') {{ skipped += 1; continue; }}
-    const value = Array.isArray(rawValue) ? rawValue.join('；') : String(rawValue ?? '');
-    if (tag === 'select') {{
-      const normalized = value.trim().toLowerCase();
-      const option = Array.from(el.options || []).find((item) =>
-        String(item.value).trim().toLowerCase() === normalized ||
-        String(item.textContent || '').trim().toLowerCase() === normalized
-      );
-      if (!option) {{ skipped += 1; continue; }}
-      el.value = option.value;
-    }} else if (tag === 'input' || tag === 'textarea') {{
-      setNativeValue(el, value);
-    }} else {{
-      skipped += 1; continue;
-    }}
+  const dispatchValueEvents = (el) => {{
     el.dispatchEvent(new Event('input', {{ bubbles: true }}));
     el.dispatchEvent(new Event('change', {{ bubbles: true }}));
     el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-    filled += 1;
+  }};
+
+  for (const [fieldId, rawValue] of Object.entries(updates)) {{
+    const nodes = Array.from(document.querySelectorAll('[data-xiaoyue-agent-id]'))
+      .filter((node) => node.dataset.xiaoyueAgentId === fieldId);
+    if (!nodes.length) {{ skipped += 1; continue; }}
+
+    const el = nodes[0];
+    const controlType = (
+      el.dataset.xiaoyueControlType
+      || (el.tagName.toLowerCase() === 'input' ? (el.getAttribute('type') || 'text') : el.tagName.toLowerCase())
+    ).toLowerCase();
+    const value = Array.isArray(rawValue) ? rawValue.join('；') : String(rawValue ?? '');
+
+    if (blocked.has(controlType)) {{ skipped += 1; continue; }}
+
+    if (controlType === 'radio_group') {{
+      const radios = nodes.filter((node) => node.matches && node.matches('input[type="radio"]'));
+      const normalized = normalize(value);
+      const target = radios.find((radio) =>
+        normalize(radio.value) === normalized || normalize(labelledText(radio)) === normalized
+      );
+      if (!target || target.disabled) {{ skipped += 1; continue; }}
+      const clickable = target.closest('label,.ant-radio-wrapper,.el-radio') || target;
+      clickable.click();
+      target.dispatchEvent(new Event('input', {{ bubbles: true }}));
+      target.dispatchEvent(new Event('change', {{ bubbles: true }}));
+      filled += 1;
+      continue;
+    }}
+
+    if (controlType === 'combobox') {{
+      const root = el.closest('.ant-select,.el-select') || el;
+      const inner = root.matches('input') ? root : root.querySelector('input,[role="combobox"]');
+      if (
+        (inner && inner.disabled)
+        || root.getAttribute('aria-disabled') === 'true'
+        || root.classList.contains('ant-select-disabled')
+        || root.classList.contains('is-disabled')
+      ) {{
+        skipped += 1;
+        continue;
+      }}
+      const trigger = root.querySelector('.ant-select-selector,.el-select__wrapper,[role="combobox"],input') || root;
+      trigger.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+      trigger.click();
+      await sleep(120);
+
+      const normalized = normalize(value);
+      const options = Array.from(document.querySelectorAll(
+        '[role="option"],.ant-select-item-option,.el-select-dropdown__item'
+      )).filter((option) =>
+        isVisible(option)
+        && !option.classList.contains('ant-select-item-option-disabled')
+        && !option.classList.contains('is-disabled')
+        && option.getAttribute('aria-disabled') !== 'true'
+      );
+      const option = options.find((candidate) =>
+        normalize(candidate.innerText || candidate.textContent) === normalized
+        || normalize(candidate.getAttribute('data-value')) === normalized
+      );
+      if (!option) {{ skipped += 1; continue; }}
+      option.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+      option.click();
+      filled += 1;
+      continue;
+    }}
+
+    if (controlType === 'date_picker') {{
+      const input = el.matches('input') ? el : el.querySelector('input');
+      if (!input || input.disabled) {{ skipped += 1; continue; }}
+      input.focus();
+      input.click();
+      setNativeValue(input, value);
+      input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+      input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+      input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+      input.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+      input.blur();
+      filled += 1;
+      continue;
+    }}
+
+    if (el.disabled || el.readOnly) {{ skipped += 1; continue; }}
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'select') {{
+      const normalized = normalize(value);
+      const option = Array.from(el.options || []).find((item) =>
+        normalize(item.value) === normalized || normalize(item.textContent) === normalized
+      );
+      if (!option) {{ skipped += 1; continue; }}
+      el.value = option.value;
+      dispatchValueEvents(el);
+      filled += 1;
+      continue;
+    }}
+    if (tag === 'input' || tag === 'textarea') {{
+      setNativeValue(el, value);
+      dispatchValueEvents(el);
+      filled += 1;
+      continue;
+    }}
+    skipped += 1;
   }}
   return {{ filled_count: filled, skipped_count: skipped }};
 }})()

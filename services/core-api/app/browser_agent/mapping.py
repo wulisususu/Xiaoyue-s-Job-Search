@@ -14,7 +14,7 @@ from .models import (
     PlanFieldSummary,
 )
 
-_BLOCKED_TYPES = {"hidden", "password", "file", "submit", "button", "reset", "image"}
+_BLOCKED_TYPES = {"hidden", "password", "file", "submit", "button", "reset", "image", "checkbox"}
 _HIGH_CONFIDENCE = 0.92
 
 
@@ -271,7 +271,10 @@ def build_fill_plan(
         score, alias, source_path, value, collection_key = top
         if collection_key is not None:
             collection_offsets[collection_key] = collection_offsets.get(collection_key, 0) + 1
-        control_needs_confirmation = field.tag.lower() == "select" or input_type in {"radio", "checkbox"}
+        control_needs_confirmation = (
+            field.tag.lower() == "select"
+            or input_type in {"radio", "radio_group", "combobox", "date_picker"}
+        )
         plan.items.append(
             FillPlanItem(
                 field_id=field.field_id,
