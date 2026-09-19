@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..ai.secrets import CredentialStoreUnavailableError
 from ..config import get_settings
 from ..db import get_engine
 from ..models import (
@@ -52,6 +53,7 @@ class ProfileDefinitionRead(BaseModel):
     category: str
     value_type: str
     multiple: bool
+    sensitive: bool
 
 
 class ProfileFieldWrite(BaseModel):
@@ -68,6 +70,7 @@ class ProfileFieldRead(BaseModel):
     source_ref: str | None = None
     confidence: float | None = None
     confirmed: bool
+    secret_configured: bool
     created_at: str
     updated_at: str
 
@@ -172,6 +175,7 @@ def _field_read(field: ProfileField) -> ProfileFieldRead:
         source_ref=field.source_ref,
         confidence=field.confidence,
         confirmed=field.confirmed,
+        secret_configured=bool(field.secret_ref),
         created_at=field.created_at.isoformat(),
         updated_at=field.updated_at.isoformat(),
     )
@@ -287,6 +291,7 @@ def list_profile_definitions() -> list[ProfileDefinitionRead]:
             category=definition.category,
             value_type=definition.value_type,
             multiple=definition.multiple,
+            sensitive=definition.sensitive,
         )
         for definition in FIELD_REGISTRY.values()
     ]
@@ -311,6 +316,8 @@ def put_profile_field(field_key: str, body: ProfileFieldWrite) -> ProfileFieldRe
             try:
                 field = manual_upsert_profile_field(session, field_key, body.value)
                 return _field_read(field)
+            except CredentialStoreUnavailableError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
             except (KeyError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:

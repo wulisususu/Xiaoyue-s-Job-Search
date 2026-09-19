@@ -23,7 +23,7 @@ from ..profile.extraction import (
     ExtractionMetadata,
     ProfileExtractionBundle,
 )
-from ..profile.registry import FIELD_REGISTRY, FieldDefinition
+from ..profile.registry import FIELD_REGISTRY, FieldDefinition, extractable_field_registry
 from .errors import (
     ProviderError,
     ProviderInputError,
@@ -91,13 +91,15 @@ def _registry_prompt(
     return "\n".join(lines)
 
 
-def _scalar_candidate_schema() -> dict[str, object]:
+def _scalar_candidate_schema(
+    registry: dict[str, FieldDefinition] = FIELD_REGISTRY,
+) -> dict[str, object]:
     return {
         "type": "object",
         "additionalProperties": False,
         "required": ["field_key", "value", "confidence"],
         "properties": {
-            "field_key": {"type": "string"},
+            "field_key": {"type": "string", "enum": list(registry)},
             "value": {
                 "oneOf": [
                     {"type": "string"},
@@ -145,7 +147,9 @@ def _collection_candidate_schema() -> dict[str, object]:
     return {"oneOf": variants}
 
 
-def _response_schema() -> dict[str, object]:
+def _response_schema(
+    registry: dict[str, FieldDefinition] = FIELD_REGISTRY,
+) -> dict[str, object]:
     return {
         "type": "object",
         "additionalProperties": False,
@@ -153,7 +157,7 @@ def _response_schema() -> dict[str, object]:
         "properties": {
             "candidates": {
                 "type": "array",
-                "items": _scalar_candidate_schema(),
+                "items": _scalar_candidate_schema(registry),
             },
             "collections": {
                 "type": "array",
@@ -304,8 +308,9 @@ class OpenAICompatibleExtractionProvider:
                 f"resume text exceeds the {MAX_INPUT_CHARS}-character provider input limit"
             )
 
+        safe_registry = extractable_field_registry(registry)
         messages = [
-            {"role": "system", "content": _registry_prompt(registry, collection_registry)},
+            {"role": "system", "content": _registry_prompt(safe_registry, collection_registry)},
             {"role": "user", "content": resume_text},
         ]
         client = OpenAICompatibleJSONClient(
@@ -316,12 +321,12 @@ class OpenAICompatibleExtractionProvider:
         candidate_payload = client.complete_json(
             messages=messages,
             schema_name="profile_candidates",
-            schema=_response_schema(),
+            schema=_response_schema(safe_registry),
             max_output_chars=MAX_OUTPUT_CHARS,
         )
 
         return ProfileExtractionBundle(
-            fields=_parse_candidates(candidate_payload, registry),
+            fields=_parse_candidates(candidate_payload, safe_registry),
             collections=_parse_collection_candidates(candidate_payload),
             metadata=self.metadata(),
         )

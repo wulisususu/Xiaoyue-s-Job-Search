@@ -110,6 +110,8 @@ def persist_bundle_drafts(
         except (KeyError, ValueError, TypeError):
             continue
         definition = get_field_definition(candidate.field_key)
+        if definition.sensitive:
+            continue
         normalized_candidate = DraftCandidate(
             field_key=candidate.field_key,
             value=normalized,
