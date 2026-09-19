@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from ..profile.registry import get_field_definition
 from .models import (
     ConfirmedProfileSnapshot,
     FillPlan,
@@ -32,6 +33,26 @@ _RULES: tuple[_Rule, ...] = (
         ("identity.name",),
         ("姓名", "真实姓名", "中文姓名", "full name", "fullname", "realname"),
         negative_terms=("紧急联系人", "联系人姓名", "推荐人", "父亲", "母亲", "家庭成员", "公司名称", "企业名称"),
+    ),
+    _Rule(
+        ("identity.gender",),
+        ("性别", "gender", "sex"),
+    ),
+    _Rule(
+        ("identity.birth_date",),
+        ("出生日期", "出生年月", "出生时间", "生日", "birth date", "birthday", "date of birth"),
+    ),
+    _Rule(
+        ("identity.id_type",),
+        ("证件类型", "证件类别", "证件种类", "document type", "id type"),
+    ),
+    _Rule(
+        ("identity.id_number",),
+        ("证件号码", "证件号", "身份证号码", "身份证号", "document number", "id number"),
+    ),
+    _Rule(
+        ("identity.political_status",),
+        ("政治面貌", "政治身份", "political status"),
     ),
     _Rule(
         ("contact.phone",),
@@ -271,9 +292,16 @@ def build_fill_plan(
         score, alias, source_path, value, collection_key = top
         if collection_key is not None:
             collection_offsets[collection_key] = collection_offsets.get(collection_key, 0) + 1
+        source_sensitive = False
+        if not source_path.startswith("collections."):
+            try:
+                source_sensitive = get_field_definition(source_path).sensitive
+            except KeyError:
+                source_sensitive = False
         control_needs_confirmation = (
             field.tag.lower() == "select"
             or input_type in {"radio", "radio_group", "combobox", "date_picker"}
+            or source_sensitive
         )
         plan.items.append(
             FillPlanItem(

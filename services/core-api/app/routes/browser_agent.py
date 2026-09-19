@@ -24,6 +24,7 @@ from ..browser_agent.models import (
 from ..config import get_settings
 from ..db import get_engine
 from ..models import ApplicationSession, Job
+from ..profile.registry import get_field_definition, mask_profile_value
 
 router = APIRouter(prefix="/api/browser-agent", tags=["browser-agent"])
 
@@ -94,7 +95,22 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
         token=plan.token,
         session_id=plan.session_id,
         page_url=plan.page_url,
-        items=[FillPlanItemRead(**asdict(item)) for item in plan.items],
+        items=[
+            FillPlanItemRead(
+                **{
+                    **asdict(item),
+                    "value": (
+                        mask_profile_value(item.source_path, item.value)
+                        if (
+                            not item.source_path.startswith("collections.")
+                            and get_field_definition(item.source_path).sensitive
+                        )
+                        else item.value
+                    ),
+                }
+            )
+            for item in plan.items
+        ],
         unmatched=[PlanFieldSummaryRead(**asdict(item)) for item in plan.unmatched],
         blocked=[PlanFieldSummaryRead(**asdict(item)) for item in plan.blocked],
     )

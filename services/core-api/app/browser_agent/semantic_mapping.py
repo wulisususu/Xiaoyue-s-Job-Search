@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from ..ai.json_client import OpenAICompatibleJSONClient
 from ..models import AIProviderConfig
+from ..profile.registry import get_field_definition
 from .models import (
     ConfirmedProfileSnapshot,
     FillPlan,
@@ -28,6 +29,12 @@ class SemanticMappingProvider(Protocol):
 def flatten_confirmed_snapshot(snapshot: ConfirmedProfileSnapshot) -> dict[str, Any]:
     candidates: dict[str, Any] = {}
     for path in sorted(snapshot.scalars):
+        try:
+            definition = get_field_definition(path)
+        except KeyError:
+            continue
+        if definition.sensitive:
+            continue
         value = snapshot.scalars[path]
         if isinstance(value, str) and value.strip():
             candidates[path] = value
