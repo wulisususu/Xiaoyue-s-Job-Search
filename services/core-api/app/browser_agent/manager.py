@@ -129,6 +129,23 @@ class BrowserAgentManager:
         unknown = sorted(set(field_ids) - set(by_id))
         if unknown:
             raise BrowserAgentPlanError(f"填写计划不包含字段: {', '.join(unknown)}")
+
+        current_scan = self._backend.scan(runtime.handle)
+        if current_scan.url != plan.page_url:
+            raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再填写。")
+        current_fields = {field.field_id: field for field in current_scan.fields}
+        stale: list[str] = []
+        for field_id in field_ids:
+            descriptor = current_fields.get(field_id)
+            expected = by_id[field_id]
+            current_type = (descriptor.input_type or descriptor.tag).lower() if descriptor else ""
+            if descriptor is None or current_type != expected.control_type.lower():
+                stale.append(field_id)
+        if stale:
+            raise BrowserAgentPlanError(
+                f"页面控件已变化，请重新扫描: {', '.join(sorted(stale))}"
+            )
+
         approved_values = {field_id: by_id[field_id].value for field_id in field_ids}
         result = self._backend.fill(runtime.handle, approved_values)
 

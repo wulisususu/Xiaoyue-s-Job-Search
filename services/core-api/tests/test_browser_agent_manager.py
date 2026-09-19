@@ -19,6 +19,8 @@ class FakeEdgeBackend:
         self.started: tuple[str, Path] | None = None
         self.filled: dict[str, object] | None = None
         self.closed = False
+        self.current_url = "https://ats.example.com/apply/form"
+        self.name_input_type = "text"
 
     def start(self, url: str, profile_dir: Path):
         self.started = (url, profile_dir)
@@ -26,13 +28,13 @@ class FakeEdgeBackend:
 
     def scan(self, handle):
         return FormScan(
-            url="https://ats.example.com/apply/form",
+            url=self.current_url,
             title="申请表",
             fields=[
                 FormFieldDescriptor(
                     field_id="name",
                     tag="input",
-                    input_type="text",
+                    input_type=self.name_input_type,
                     label="姓名",
                     name="realName",
                     placeholder="",
@@ -171,3 +173,27 @@ def test_real_manager_rejects_stale_plan_and_unknown_field_ids(client, monkeypat
         manager.fill(info.id, "stale-token", ["name"])
     with pytest.raises(BrowserAgentPlanError):
         manager.fill(info.id, plan.token, ["not-in-plan"])
+
+
+def test_real_manager_rejects_plan_after_navigation_or_control_type_change(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    backend = FakeEdgeBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    backend.current_url = "https://ats.example.com/apply/next-step"
+    with pytest.raises(BrowserAgentPlanError, match="页面已变化"):
+        manager.fill(info.id, plan.token, ["name"])
+    assert backend.filled is None
+
+    backend.current_url = plan.page_url
+    backend.name_input_type = "password"
+    with pytest.raises(BrowserAgentPlanError, match="页面控件已变化"):
+        manager.fill(info.id, plan.token, ["name"])
+    assert backend.filled is None
