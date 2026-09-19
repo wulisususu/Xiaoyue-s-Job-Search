@@ -30,6 +30,8 @@ def test_provider_base_url_is_normalized_and_chat_endpoint_is_stable():
     assert normalize_base_url("https://example.com/v1/") == "https://example.com/v1"
     assert chat_completions_url("https://example.com/v1/") == "https://example.com/v1/chat/completions"
     assert chat_completions_url("http://127.0.0.1:8000") == "http://127.0.0.1:8000/v1/chat/completions"
+    assert chat_completions_url("https://open.bigmodel.cn/api/paas/v4") == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    assert chat_completions_url("https://generativelanguage.googleapis.com/v1beta/openai") == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 
 @pytest.mark.parametrize(

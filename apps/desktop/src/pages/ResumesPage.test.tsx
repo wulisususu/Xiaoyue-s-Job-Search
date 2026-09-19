@@ -104,3 +104,58 @@ it('explains when a scanned PDF needs OCR before profile extraction', async () =
   expect(screen.getByText('需要 OCR')).toBeInTheDocument();
   expect(screen.getByText(/当前版本没有可用文本层/)).toBeInTheDocument();
 });
+
+
+it('can launch AI profile extraction from an extracted resume and refresh pending drafts', async () => {
+  let listed = 0;
+  const resume = {
+    id: 'resume-ai',
+    sha256: 'd'.repeat(64),
+    original_filename: 'AI简历.pdf',
+    file_ext: '.pdf',
+    mime_type: 'application/pdf',
+    size_bytes: 4096,
+    version_number: 4,
+    extraction_status: 'EXTRACTED',
+    parser_name: 'pypdf',
+    parser_version: '6.19.0',
+    extraction_error: null,
+    created_at: '2026-09-19T10:00:00',
+    pending_draft_count: 0,
+  };
+
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith('/api/ai/extraction-runs') && init?.method === 'POST') {
+      expect(JSON.parse(String(init.body))).toEqual({ resume_version_id: 'resume-ai' });
+      return Promise.resolve(new Response(JSON.stringify({
+        id: 9,
+        resume_version_id: 'resume-ai',
+        provider: 'openai_compatible',
+        model: 'deepseek-flash',
+        prompt_version: 'registry-prompt-v2',
+        schema_version: 'bundle-v1',
+        status: 'SUCCEEDED',
+        input_hash: 'hash',
+        error: null,
+        created_at: '2026-09-19T10:01:00',
+        completed_at: '2026-09-19T10:01:02',
+        scalar_draft_count: 3,
+        collection_draft_count: 2,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    listed += 1;
+    return Promise.resolve(new Response(JSON.stringify([
+      { ...resume, pending_draft_count: listed > 1 ? 5 : 0 },
+    ]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<ResumesPage />);
+  await waitFor(() => expect(screen.getByText('AI简历.pdf')).toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole('button', { name: 'AI 解析资料' }));
+
+  await waitFor(() => expect(screen.getByText(/已生成 5 项资料候选/)).toBeInTheDocument());
+  expect(screen.getByText('5 项待审核')).toBeInTheDocument();
+});
