@@ -9,14 +9,16 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..ai.secrets import CredentialStoreUnavailableError, get_secret_store
 from ..config import get_settings
 from ..db import get_engine
-from ..models import ApplicationSession, Job
+from ..models import AIProviderConfig, ApplicationSession, Job
 from ..verification.url_guard import validate_external_url
 from .cdp import BrowserControlError, BrowserUnavailableError, EdgeBrowserBackend, EdgeHandle
 from .mapping import build_fill_plan
 from .models import BrowserAgentSessionInfo, FillPlan
 from .profile_snapshot import build_confirmed_profile_snapshot
+from .semantic_mapping import OpenAICompatibleSemanticMappingProvider, apply_semantic_suggestions
 
 
 class BrowserAgentSessionNotFoundError(LookupError):
@@ -28,6 +30,10 @@ class BrowserAgentConflictError(RuntimeError):
 
 
 class BrowserAgentPlanError(RuntimeError):
+    pass
+
+
+class BrowserAgentAIUnavailableError(RuntimeError):
     pass
 
 
@@ -118,6 +124,41 @@ class BrowserAgentManager:
         runtime.latest_plan = plan
         runtime.info.url = scan.url or runtime.info.url
         return plan
+
+    def augment_plan_with_ai(self, session_id: str, plan_token: str) -> FillPlan:
+        runtime = self._runtime(session_id)
+        plan = runtime.latest_plan
+        if plan is None or plan.token != plan_token:
+            raise BrowserAgentPlanError("填写计划已失效，请重新扫描表单。")
+        if not plan.unmatched:
+            return plan
+
+        current_scan = self._backend.scan(runtime.handle)
+        if current_scan.url != plan.page_url:
+            raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再使用 AI 补全。")
+
+        engine = get_engine(get_settings())
+        try:
+            with Session(engine) as db:
+                snapshot = build_confirmed_profile_snapshot(db)
+                config = db.get(AIProviderConfig, "default")
+                if config is None:
+                    raise BrowserAgentAIUnavailableError("请先在设置中配置 AI Provider。")
+                if not config.secret_ref:
+                    raise BrowserAgentAIUnavailableError("请先在设置中保存 AI Provider API Key。")
+                try:
+                    api_key = get_secret_store().get_secret(config.secret_ref)
+                except CredentialStoreUnavailableError as exc:
+                    raise BrowserAgentAIUnavailableError(str(exc)) from exc
+                if not api_key:
+                    raise BrowserAgentAIUnavailableError("AI Provider API Key 不可用，请重新保存。")
+                provider = OpenAICompatibleSemanticMappingProvider(config, api_key)
+                updated = apply_semantic_suggestions(snapshot, current_scan, plan, provider)
+        finally:
+            engine.dispose()
+
+        runtime.latest_plan = updated
+        return updated
 
     def fill(self, session_id: str, plan_token: str, field_ids: list[str]) -> dict[str, Any]:
         runtime = self._runtime(session_id)

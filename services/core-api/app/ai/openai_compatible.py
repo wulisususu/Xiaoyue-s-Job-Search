@@ -31,7 +31,7 @@ from .errors import (
     ProviderResponseError,
     ProviderTimeoutError,
 )
-from .provider import chat_completions_url
+from .json_client import OpenAICompatibleJSONClient
 
 __all__ = [
     "MAX_INPUT_CHARS",
@@ -308,64 +308,17 @@ class OpenAICompatibleExtractionProvider:
             {"role": "system", "content": _registry_prompt(registry, collection_registry)},
             {"role": "user", "content": resume_text},
         ]
-        body: dict[str, object] = {
-            "model": self._config.text_model,
-            "temperature": self._config.temperature,
-            "messages": messages,
-        }
-        if self._config.supports_json_schema:
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "profile_candidates",
-                    "strict": True,
-                    "schema": _response_schema(),
-                },
-            }
-
-        try:
-            with httpx.Client(
-                transport=self._transport,
-                timeout=float(self._config.timeout_seconds),
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-            ) as client:
-                response = client.post(chat_completions_url(self._config.base_url), json=body)
-        except httpx.TimeoutException as exc:
-            raise ProviderTimeoutError("AI provider request timed out") from exc
-        except httpx.RequestError as exc:
-            raise ProviderRequestError("AI provider request failed") from exc
-
-        if response.status_code >= 400:
-            raise ProviderRequestError(f"AI provider returned HTTP {response.status_code}")
-
-        try:
-            response_payload = response.json()
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise ProviderResponseError("AI provider returned invalid JSON") from exc
-
-        if not isinstance(response_payload, dict):
-            raise ProviderResponseError("AI provider returned an invalid response")
-        choices = response_payload.get("choices")
-        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise ProviderResponseError("AI provider response has no completion choice")
-        message = choices[0].get("message")
-        if not isinstance(message, dict):
-            raise ProviderResponseError("AI provider response has no completion message")
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise ProviderResponseError("AI provider response has no completion content")
-        if len(content) > MAX_OUTPUT_CHARS:
-            raise ProviderResponseError(
-                f"AI provider completion exceeds the {MAX_OUTPUT_CHARS}-character output limit"
-            )
-
-        try:
-            candidate_payload = json.loads(_strip_json_fence(content))
-        except json.JSONDecodeError as exc:
-            raise ProviderResponseError("AI provider completion content is not valid JSON") from exc
+        client = OpenAICompatibleJSONClient(
+            self._config,
+            self._api_key,
+            transport=self._transport,
+        )
+        candidate_payload = client.complete_json(
+            messages=messages,
+            schema_name="profile_candidates",
+            schema=_response_schema(),
+            max_output_chars=MAX_OUTPUT_CHARS,
+        )
 
         return ProfileExtractionBundle(
             fields=_parse_candidates(candidate_payload, registry),

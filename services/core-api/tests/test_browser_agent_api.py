@@ -117,11 +117,11 @@ def test_browser_agent_api_exposes_plan_then_fills_only_approved_plan_fields(cli
 
     filled = client.post(
         "/api/browser-agent/sessions/agent-1/fill",
-        json={"plan_token": "plan-1", "field_ids": ["xy-1"]},
+        json={"plan_token": "plan-ai", "field_ids": ["xy-1"]},
     )
     assert filled.status_code == 200
     assert filled.json()["filled_count"] == 1
-    assert manager.filled == ("agent-1", "plan-1", ["xy-1"])
+    assert manager.filled == ("agent-1", "plan-ai", ["xy-1"])
 
 
 def test_browser_agent_requires_browser_agent_application_channel(client, monkeypatch):

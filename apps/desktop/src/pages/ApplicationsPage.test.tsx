@@ -97,6 +97,6 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
   await waitFor(() => {
     const fill = calls.find((call) => call.url.endsWith('/api/browser-agent/sessions/agent-1/fill'));
     expect(fill).toBeDefined();
-    expect(JSON.parse(String(fill!.init?.body))).toEqual({ plan_token: 'plan-1', field_ids: ['f-name'] });
+    expect(JSON.parse(String(fill!.init?.body))).toEqual({ plan_token: 'plan-ai', field_ids: ['f-name'] });
   });
 });

@@ -6,8 +6,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..ai.errors import ProviderError, ProviderTimeoutError
 from ..browser_agent.cdp import BrowserControlError, BrowserUnavailableError
 from ..browser_agent.manager import (
+    BrowserAgentAIUnavailableError,
     BrowserAgentConflictError,
     BrowserAgentPlanError,
     BrowserAgentSessionNotFoundError,
@@ -62,6 +64,10 @@ class FillPlanRead(BaseModel):
     items: list[FillPlanItemRead]
     unmatched: list[PlanFieldSummaryRead]
     blocked: list[PlanFieldSummaryRead]
+
+
+class SemanticPlanRequest(BaseModel):
+    plan_token: str = Field(min_length=1)
 
 
 class FillRequest(BaseModel):
@@ -141,6 +147,26 @@ def build_browser_agent_plan(session_id: str) -> FillPlanRead:
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (BrowserControlError, BrowserUnavailableError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/semantic-plan", response_model=FillPlanRead)
+def build_browser_agent_semantic_plan(session_id: str, body: SemanticPlanRequest) -> FillPlanRead:
+    try:
+        return _plan_read(
+            get_browser_agent_manager().augment_plan_with_ai(session_id, body.plan_token)
+        )
+    except BrowserAgentSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BrowserAgentPlanError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BrowserAgentAIUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProviderTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BrowserControlError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

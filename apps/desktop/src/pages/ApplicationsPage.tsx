@@ -6,6 +6,7 @@ import {
   fillBrowserAgentPlan,
   getBrowserAgentSessions,
   getBrowserFillPlan,
+  getBrowserSemanticPlan,
   startBrowserAgentSession,
   type BrowserAgentSession,
   type BrowserFillPlan,
@@ -90,6 +91,35 @@ export function ApplicationsPage() {
       setMessage(`已扫描当前页面：可建议填写 ${plan.items.length} 项，未匹配 ${plan.unmatched.length} 项。`);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : '表单扫描失败');
+    } finally {
+      setAgentBusyId(null);
+    }
+  }
+
+  async function augmentWithAI(applicationId: number) {
+    const plan = plans[applicationId];
+    const session = sessionsByApplication.get(applicationId);
+    if (!plan || !session || plan.unmatched.length === 0) return;
+    setAgentBusyId(applicationId);
+    setError('');
+    setMessage('');
+    try {
+      const updated = await getBrowserSemanticPlan(session.id, plan.token);
+      setPlans((current) => ({ ...current, [applicationId]: updated }));
+      setApproved((current) => {
+        const previous = new Set(current[applicationId] ?? []);
+        const validIds = new Set(updated.items.map((item) => item.field_id));
+        return {
+          ...current,
+          [applicationId]: Array.from(previous).filter((fieldId) => validIds.has(fieldId)),
+        };
+      });
+      const added = Math.max(0, updated.items.length - plan.items.length);
+      setMessage(
+        `AI 补全完成：新增 ${added} 项语义建议。AI 建议默认不勾选，请逐项确认后再填写。`,
+      );
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : 'AI 语义补全失败');
     } finally {
       setAgentBusyId(null);
     }
@@ -233,7 +263,17 @@ export function ApplicationsPage() {
                           </div>
 
                           {plan.unmatched.length > 0 && (
-                            <p className="agent-unmatched">未自动匹配：{plan.unmatched.map((item) => item.label || item.field_id).join('、')}</p>
+                            <>
+                              <p className="agent-unmatched">未自动匹配：{plan.unmatched.map((item) => item.label || item.field_id).join('、')}</p>
+                              <button
+                                className="secondary-button"
+                                disabled={agentBusyId === application.id}
+                                onClick={() => augmentWithAI(application.id)}
+                                type="button"
+                              >
+                                AI 补全未匹配
+                              </button>
+                            </>
                           )}
                           {plan.blocked.length > 0 && (
                             <p className="agent-blocked">安全阻断：{plan.blocked.map((item) => item.label || item.field_id).join('、')}</p>

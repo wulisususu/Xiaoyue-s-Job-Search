@@ -75,6 +75,20 @@ export function getBrowserFillPlan(sessionId: string): Promise<BrowserFillPlan> 
   });
 }
 
+export function getBrowserSemanticPlan(
+  sessionId: string,
+  planToken: string,
+): Promise<BrowserFillPlan> {
+  return requestJson<BrowserFillPlan>(
+    `/api/browser-agent/sessions/${encodeURIComponent(sessionId)}/semantic-plan`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_token: planToken }),
+    },
+  );
+}
+
 export function fillBrowserAgentPlan(
   sessionId: string,
   planToken: string,
