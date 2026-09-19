@@ -61,3 +61,36 @@ def test_browser_agent_snapshot_reads_only_confirmed_ssot(client):
             assert "skill" not in snapshot.collections
     finally:
         engine.dispose()
+
+
+def test_browser_agent_snapshot_resolves_sensitive_value_from_credential_store(client, monkeypatch):
+    from app.config import get_settings
+    from app.db import get_engine
+    from app.browser_agent import profile_snapshot
+
+    class Store:
+        def get_secret(self, ref):
+            return "TESTDOC-ABC1234" if ref == "profile-field:identity.id_number" else None
+
+    monkeypatch.setattr(profile_snapshot, "get_secret_store", lambda: Store())
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            session.add(
+                ProfileField(
+                    field_key="identity.id_number",
+                    value_json=json.dumps("************1234"),
+                    value_type="string",
+                    source_type="manual",
+                    confidence=1.0,
+                    confirmed=True,
+                    secret_ref="profile-field:identity.id_number",
+                )
+            )
+            session.commit()
+
+            snapshot = build_confirmed_profile_snapshot(session)
+            assert snapshot.scalars["identity.id_number"] == "TESTDOC-ABC1234"
+    finally:
+        engine.dispose()

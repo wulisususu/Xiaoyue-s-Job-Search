@@ -317,3 +317,71 @@ it('reviews structured collection drafts and only exposes accepted records to th
   await waitFor(() => expect(screen.queryByRole('button', { name: '拒绝 教育经历候选 2' })).not.toBeInTheDocument());
   expect(screen.queryByText('第二候选学校')).not.toBeInTheDocument();
 });
+
+
+it('keeps sensitive identity fields blank in the editor and saves replacements without echoing plaintext', async () => {
+  const definitions = [
+    { field_key: 'identity.id_number', label: '证件号码', category: '身份信息', value_type: 'string', multiple: false, sensitive: true },
+    { field_key: 'identity.birth_date', label: '出生日期', category: '身份信息', value_type: 'string', multiple: false, sensitive: false },
+  ];
+  const fields = [
+    {
+      field_key: 'identity.id_number',
+      label: '证件号码',
+      category: '身份信息',
+      value: '************1234',
+      value_type: 'string',
+      source_type: 'manual',
+      source_ref: null,
+      confidence: 1,
+      confirmed: true,
+      secret_configured: true,
+      created_at: '2026-09-19T10:00:00',
+      updated_at: '2026-09-19T10:00:00',
+    },
+  ];
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith('/api/profile/definitions')) {
+      return Promise.resolve(new Response(JSON.stringify(definitions), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/fields') && !init) {
+      return Promise.resolve(new Response(JSON.stringify(fields), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/profile/fields/identity.id_number') && init?.method === 'PUT') {
+      return Promise.resolve(new Response(JSON.stringify({
+        ...fields[0],
+        value: '************5678',
+        updated_at: '2026-09-19T10:01:00',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (
+      url.endsWith('/api/profile/drafts?status=PENDING')
+      || url.endsWith('/api/profile/collections/definitions')
+      || url.endsWith('/api/profile/collection-drafts?status=PENDING')
+    ) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return Promise.resolve(new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  }));
+
+  render(<ProfilePage />);
+
+  await waitFor(() => expect(screen.getByLabelText('证件号码')).toBeInTheDocument());
+  const secretInput = screen.getByLabelText('证件号码') as HTMLInputElement;
+  expect(secretInput.type).toBe('password');
+  expect(secretInput.value).toBe('');
+  expect(secretInput.placeholder).toMatch(/已安全保存/);
+  expect(screen.queryByDisplayValue('************1234')).not.toBeInTheDocument();
+
+  fireEvent.change(secretInput, { target: { value: 'TESTDOC-XYZ5678' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存 证件号码' }));
+
+  await waitFor(() => expect(secretInput.value).toBe(''));
+  const save = calls.find((call) => call.url.endsWith('/api/profile/fields/identity.id_number') && call.init?.method === 'PUT');
+  expect(save).toBeDefined();
+  expect(JSON.parse(String(save!.init?.body))).toEqual({ value: 'TESTDOC-XYZ5678' });
+});

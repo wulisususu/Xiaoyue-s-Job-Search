@@ -243,3 +243,25 @@ def test_foreign_key_cascade_actually_deletes(tmp_path):
             assert session.get(Company, company_id) is None
     finally:
         engine.dispose()
+
+
+def test_0009_db_upgrades_to_0010_with_profile_secret_reference(tmp_path):
+    settings = _settings(tmp_path)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    command.upgrade(_alembic_config(settings), "0009_ai_extraction_runs")
+
+    engine = create_engine(f"sqlite:///{settings.database_path}")
+    try:
+        columns = {c["name"] for c in inspect(engine).get_columns("profile_fields")}
+        assert "secret_ref" not in columns
+    finally:
+        engine.dispose()
+
+    init_db(settings)
+
+    engine = get_engine(settings)
+    try:
+        columns = {c["name"] for c in inspect(engine).get_columns("profile_fields")}
+        assert "secret_ref" in columns
+    finally:
+        engine.dispose()

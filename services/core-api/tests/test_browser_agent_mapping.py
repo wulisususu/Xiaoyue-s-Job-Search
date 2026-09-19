@@ -161,3 +161,37 @@ def test_custom_ats_controls_require_confirmation_and_checkboxes_are_blocked():
     assert mapped["hukou-radio"].value == "安徽"
     assert mapped["hukou-radio"].requires_confirmation is True
     assert "consent" in {item.field_id for item in plan.blocked}
+
+
+def test_recruitment_identity_fields_map_locally_and_sensitive_document_requires_confirmation():
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={
+            "identity.gender": "女",
+            "identity.birth_date": "2004-01-02",
+            "identity.id_type": "居民身份证",
+            "identity.id_number": "TESTDOC-ABC1234",
+            "identity.political_status": "群众",
+        },
+        collections={},
+    )
+    scan = FormScan(
+        url="https://ats.example.com/apply",
+        title="网申",
+        fields=[
+            field("gender", "性别"),
+            field("birth", "出生日期"),
+            field("id-type", "证件类型"),
+            field("id-no", "证件号码"),
+            field("political", "政治面貌"),
+        ],
+    )
+
+    plan = build_fill_plan(snapshot, scan)
+    mapped = {item.field_id: item for item in plan.items}
+    assert mapped["gender"].source_path == "identity.gender"
+    assert mapped["birth"].source_path == "identity.birth_date"
+    assert mapped["id-type"].source_path == "identity.id_type"
+    assert mapped["id-no"].source_path == "identity.id_number"
+    assert mapped["id-no"].value == "TESTDOC-ABC1234"
+    assert mapped["id-no"].requires_confirmation is True
+    assert mapped["political"].source_path == "identity.political_status"

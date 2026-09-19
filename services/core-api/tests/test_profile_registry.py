@@ -58,3 +58,23 @@ def test_resume_and_profile_tables_have_identity_constraints():
     profile_table = Base.metadata.tables["profile_fields"]
     assert resume_table.c.sha256.unique is True
     assert profile_table.c.field_key.unique is True
+
+
+def test_registry_exposes_recruitment_identity_fields_and_marks_document_number_sensitive():
+    expected = {
+        "identity.gender",
+        "identity.birth_date",
+        "identity.id_type",
+        "identity.id_number",
+        "identity.political_status",
+    }
+    assert expected.issubset(FIELD_REGISTRY)
+    assert get_field_definition("identity.id_number").sensitive is True
+    assert get_field_definition("identity.birth_date").sensitive is False
+
+    assert validate_profile_value("identity.birth_date", "2004-01-02") == "2004-01-02"
+    assert validate_profile_value("identity.id_number", "TESTDOC-ABC1234") == "TESTDOC-ABC1234"
+    with pytest.raises(ValueError):
+        validate_profile_value("identity.birth_date", "2004/01/02")
+    with pytest.raises(ValueError):
+        validate_profile_value("identity.id_number", "12")

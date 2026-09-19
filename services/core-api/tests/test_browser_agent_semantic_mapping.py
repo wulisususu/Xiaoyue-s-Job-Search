@@ -176,3 +176,19 @@ def test_ai_semantic_mapping_treats_custom_combobox_and_radio_group_as_option_co
     assert mapped["degree"].requires_confirmation is True
     assert mapped["hukou"].value == "安徽"
     assert mapped["hukou"].requires_confirmation is True
+
+
+def test_semantic_provider_candidates_exclude_sensitive_profile_values():
+    from app.browser_agent.semantic_mapping import flatten_confirmed_snapshot
+
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={
+            "identity.name": "测试用户",
+            "identity.id_number": "TESTDOC-ABC1234",
+        },
+        collections={},
+    )
+    candidates = flatten_confirmed_snapshot(snapshot)
+    assert candidates["identity.name"] == "测试用户"
+    assert "identity.id_number" not in candidates
+    assert "TESTDOC-ABC1234" not in str(candidates)
