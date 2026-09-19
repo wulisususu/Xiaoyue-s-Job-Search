@@ -1,6 +1,4 @@
 import { ChangeEvent, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-
 import { createExtractionRun } from '../api/aiClient';
 import { getResumes, importResume, type ResumeVersion } from '../api/resumesClient';
 
@@ -179,7 +177,7 @@ export function ResumesPage() {
                     >
                       {extractingResumeId === resume.id ? 'AI 解析中…' : 'AI 解析资料'}
                     </button>
-                    {resume.pending_draft_count > 0 && <Link className="secondary-button" to="/profile">审核候选</Link>}
+                    {resume.pending_draft_count > 0 && <a className="secondary-button" href="/profile">审核候选</a>}
                   </div>
                 )}
               </div>
