@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 
 _PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+_DOCUMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9()\-]{3,31}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,10 +18,16 @@ class FieldDefinition:
     category: str
     value_type: str
     multiple: bool = False
+    sensitive: bool = False
 
 
 _DEFINITIONS = [
     FieldDefinition("identity.name", "姓名", "身份信息", "string"),
+    FieldDefinition("identity.gender", "性别", "身份信息", "string"),
+    FieldDefinition("identity.birth_date", "出生日期", "身份信息", "string"),
+    FieldDefinition("identity.id_type", "证件类型", "身份信息", "string"),
+    FieldDefinition("identity.id_number", "证件号码", "身份信息", "string", sensitive=True),
+    FieldDefinition("identity.political_status", "政治面貌", "身份信息", "string"),
     FieldDefinition("contact.phone", "手机号", "联系方式", "string"),
     FieldDefinition("contact.email", "邮箱", "联系方式", "string"),
     FieldDefinition("education.school", "学校", "教育经历", "string"),
@@ -44,6 +52,12 @@ def get_field_definition(field_key: str) -> FieldDefinition:
         raise KeyError(f"Unknown profile field: {field_key}") from exc
 
 
+def extractable_field_registry(
+    registry: dict[str, FieldDefinition] = FIELD_REGISTRY,
+) -> dict[str, FieldDefinition]:
+    return {key: definition for key, definition in registry.items() if not definition.sensitive}
+
+
 def _non_empty_string(value: Any, field_key: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{field_key} must be a string")
@@ -51,6 +65,15 @@ def _non_empty_string(value: Any, field_key: str) -> str:
     if not normalized:
         raise ValueError(f"{field_key} cannot be empty")
     return normalized
+
+
+def mask_profile_value(field_key: str, value: Any) -> Any:
+    definition = get_field_definition(field_key)
+    if not definition.sensitive:
+        return value
+    normalized = _non_empty_string(value, field_key)
+    visible = min(4, len(normalized))
+    return ("*" * max(4, len(normalized) - visible)) + normalized[-visible:]
 
 
 def validate_profile_value(field_key: str, value: Any) -> Any:
@@ -69,4 +92,13 @@ def validate_profile_value(field_key: str, value: Any) -> Any:
         raise ValueError("contact.phone must be a valid mainland China mobile number")
     if field_key == "contact.email" and not _EMAIL_RE.fullmatch(normalized):
         raise ValueError("contact.email must be a valid email address")
+    if field_key == "identity.birth_date":
+        try:
+            parsed = date.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError("identity.birth_date must use YYYY-MM-DD") from exc
+        if parsed.isoformat() != normalized:
+            raise ValueError("identity.birth_date must use YYYY-MM-DD")
+    if field_key == "identity.id_number" and not _DOCUMENT_RE.fullmatch(normalized):
+        raise ValueError("identity.id_number must be a 4-32 character document identifier")
     return normalized

@@ -261,6 +261,7 @@ class ProfileField(Base):
     field_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True, index=True)
     value_json: Mapped[str] = mapped_column(Text, nullable=False)
     value_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    secret_ref: Mapped[str | None] = mapped_column(String(240), nullable=True)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
