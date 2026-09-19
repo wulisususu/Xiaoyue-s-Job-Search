@@ -15,6 +15,7 @@ import {
   verifyJob,
 } from '../api/jobsClient';
 import { startApplication } from '../api/applicationsClient';
+import { startBrowserAgentSession } from '../api/browserAgentClient';
 
 const emptyStats: JobStats = {
   total: 0,
@@ -123,6 +124,22 @@ export function JobsPage() {
       refresh();
     } catch (reason: unknown) {
       setActionMessage(reason instanceof Error ? reason.message : '操作失败');
+    } finally {
+      setActionKey('');
+    }
+  }
+
+  async function beginSmartApplication(job: RadarJob) {
+    if (!(job.canonical_url || job.apply_url)) return;
+    setActionKey(`smart-apply-${job.id}`);
+    setActionMessage('');
+    try {
+      const record = await startApplication(job.id, 'browser_agent');
+      await startBrowserAgentSession(record.id);
+      setActionMessage('受控 Edge 已打开。请在浏览器中登录/完成验证码并进入网申表单，然后到“投递中心”扫描表单。');
+      refresh();
+    } catch (reason: unknown) {
+      setActionMessage(reason instanceof Error ? reason.message : '智能填写浏览器启动失败');
     } finally {
       setActionKey('');
     }
@@ -245,7 +262,8 @@ export function JobsPage() {
                 <div className="job-actions">
                   {job.apply_url ? <a href={job.apply_url} target="_blank" rel="noreferrer" className="secondary-button">查看原始入口</a> : <span className="muted-action">暂无入口</span>}
                   {canVerify && <button className="secondary-button" type="button" disabled={Boolean(actionKey)} onClick={() => runAction(`verify-${job.id}`, () => verifyJob(job.id), '入口验证完成')}>{actionKey === `verify-${job.id}` ? '验证中…' : '验证入口'}</button>}
-                  <button className="primary-button" type="button" disabled={!verified} onClick={() => beginApplication(job)}>{actionKey === `apply-${job.id}` ? '打开中…' : '开始申请'}</button>
+                  <button className="primary-button" type="button" disabled={!verified || Boolean(actionKey)} onClick={() => beginSmartApplication(job)}>{actionKey === `smart-apply-${job.id}` ? '启动中…' : '智能填写'}</button>
+                  <button className="secondary-button" type="button" disabled={!verified || Boolean(actionKey)} onClick={() => beginApplication(job)}>{actionKey === `apply-${job.id}` ? '打开中…' : '开始申请'}</button>
                 </div>
               </article>
             );

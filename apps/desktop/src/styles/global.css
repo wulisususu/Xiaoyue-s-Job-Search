@@ -111,3 +111,27 @@ button, input, select, textarea { font: inherit; }
 }
 
 .resume-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 13px; border-top: 1px solid #edf0f4; }
+
+.application-card { align-items: flex-start; }
+.agent-panel { margin-top: 16px; padding: 15px; border: 1px solid #dfe6ef; border-radius: 14px; background: #fafcff; }
+.agent-panel-header { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+.agent-panel-header strong { font-size: 13px; }
+.agent-panel-header p { margin: 5px 0 0; color: #7b879a; font-size: 11px; line-height: 1.55; }
+.agent-actions { display: flex; gap: 7px; flex-shrink: 0; }
+.agent-plan { margin-top: 13px; padding-top: 13px; border-top: 1px solid #e6ebf2; }
+.agent-safety-note { padding: 9px 11px; border-radius: 9px; background: #eef4fb; color: #52627a; font-size: 11px; line-height: 1.55; }
+.agent-plan-list { display: grid; gap: 7px; margin: 11px 0; }
+.agent-plan-row { display: grid; grid-template-columns: 20px minmax(150px,.9fr) minmax(160px,1.2fr) auto; gap: 9px; align-items: center; padding: 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: white; cursor: pointer; }
+.agent-plan-row.needs-review { border-color: #ead9aa; background: #fffcf4; }
+.agent-plan-copy strong, .agent-plan-copy small { display: block; }
+.agent-plan-copy strong { font-size: 12px; }
+.agent-plan-copy small { margin-top: 3px; color: #8793a5; font-size: 10px; }
+.agent-plan-copy code { color: #4d57a7; }
+.agent-value { overflow: hidden; color: #43516a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-unmatched, .agent-blocked { margin: 8px 0; color: #8a6416; font-size: 11px; line-height: 1.55; }
+.agent-blocked { color: #8a5a5a; }
+@media (max-width: 1180px) {
+  .agent-panel-header { flex-direction: column; }
+  .agent-plan-row { grid-template-columns: 20px 1fr auto; }
+  .agent-value { grid-column: 2 / -1; }
+}

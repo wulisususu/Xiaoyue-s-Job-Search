@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -78,7 +80,7 @@ class CloseResultRead(BaseModel):
 
 
 def _session_read(info: BrowserAgentSessionInfo) -> BrowserAgentSessionRead:
-    return BrowserAgentSessionRead(**info.__dict__)
+    return BrowserAgentSessionRead(**asdict(info))
 
 
 def _plan_read(plan: FillPlan) -> FillPlanRead:
@@ -86,9 +88,9 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
         token=plan.token,
         session_id=plan.session_id,
         page_url=plan.page_url,
-        items=[FillPlanItemRead(**item.__dict__) for item in plan.items],
-        unmatched=[PlanFieldSummaryRead(**item.__dict__) for item in plan.unmatched],
-        blocked=[PlanFieldSummaryRead(**item.__dict__) for item in plan.blocked],
+        items=[FillPlanItemRead(**asdict(item)) for item in plan.items],
+        unmatched=[PlanFieldSummaryRead(**asdict(item)) for item in plan.unmatched],
+        blocked=[PlanFieldSummaryRead(**asdict(item)) for item in plan.blocked],
     )
 
 

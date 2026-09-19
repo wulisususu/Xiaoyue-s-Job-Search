@@ -24,11 +24,11 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function startApplication(jobId: string): Promise<ApplicationRecord> {
+export function startApplication(jobId: string, channel: 'manual' | 'browser_agent' = 'manual'): Promise<ApplicationRecord> {
   return requestJson<ApplicationRecord>(`${coreRuntime().baseUrl}/api/applications`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_id: jobId }),
+    body: JSON.stringify({ job_id: jobId, channel }),
   });
 }
 
