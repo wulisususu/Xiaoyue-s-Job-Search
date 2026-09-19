@@ -122,3 +122,42 @@ def test_repeated_collection_fields_advance_by_occurrence_and_never_duplicate_fi
     )
     assert "school-3" not in mapped
     assert "school-3" in {item.field_id for item in plan.unmatched}
+
+
+def test_custom_ats_controls_require_confirmation_and_checkboxes_are_blocked():
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={"location.hukou": "安徽"},
+        collections={"education": [{"degree": "本科"}]},
+    )
+    scan = FormScan(
+        url="https://ats.example.com/apply",
+        title="网申",
+        fields=[
+            FormFieldDescriptor(
+                field_id="degree-combo", tag="div", input_type="combobox",
+                label="最高学历", name="degree", placeholder="请选择",
+                aria_label="", section="教育经历", required=True,
+                options=["本科", "硕士"],
+            ),
+            FormFieldDescriptor(
+                field_id="hukou-radio", tag="radio_group", input_type="radio_group",
+                label="户籍所在地", name="hukou", placeholder="",
+                aria_label="", section="基本信息", required=True,
+                options=["安徽", "江苏"],
+            ),
+            FormFieldDescriptor(
+                field_id="consent", tag="input", input_type="checkbox",
+                label="我已阅读并同意", name="consent", placeholder="",
+                aria_label="", section="", required=True, options=[],
+            ),
+        ],
+    )
+
+    plan = build_fill_plan(snapshot, scan)
+    mapped = {item.field_id: item for item in plan.items}
+
+    assert mapped["degree-combo"].value == "本科"
+    assert mapped["degree-combo"].requires_confirmation is True
+    assert mapped["hukou-radio"].value == "安徽"
+    assert mapped["hukou-radio"].requires_confirmation is True
+    assert "consent" in {item.field_id for item in plan.blocked}

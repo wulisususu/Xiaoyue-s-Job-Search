@@ -129,3 +129,50 @@ def test_ai_semantic_mapping_rejects_option_not_present_on_page():
     updated = apply_semantic_suggestions(snapshot, scan, plan, provider)
     assert updated.items == []
     assert [item.field_id for item in updated.unmatched] == ["degree"]
+
+
+def test_ai_semantic_mapping_treats_custom_combobox_and_radio_group_as_option_controls():
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={"location.hukou": "安徽"},
+        collections={"education": [{"degree": "本科"}]},
+    )
+    scan = FormScan(
+        url="https://ats.example.com/apply",
+        title="网申",
+        fields=[
+            descriptor("degree", "学历层次", input_type="combobox", options=["大学本科", "硕士研究生"]),
+            descriptor("hukou", "户籍所在地", input_type="radio_group", options=["安徽", "江苏"]),
+        ],
+    )
+    plan = FillPlan(
+        token="plan-old",
+        session_id="agent-1",
+        page_url=scan.url,
+        unmatched=[
+            PlanFieldSummary("degree", "学历层次", "combobox"),
+            PlanFieldSummary("hukou", "户籍所在地", "radio_group"),
+        ],
+    )
+    provider = FakeSemanticProvider([
+        {
+            "field_id": "degree",
+            "source_path": "collections.education[0].degree",
+            "confidence": 0.98,
+            "reason": "学历映射",
+            "selected_option": "大学本科",
+        },
+        {
+            "field_id": "hukou",
+            "source_path": "location.hukou",
+            "confidence": 0.99,
+            "reason": "户籍映射",
+            "selected_option": "安徽",
+        },
+    ])
+
+    updated = apply_semantic_suggestions(snapshot, scan, plan, provider)
+    mapped = {item.field_id: item for item in updated.items}
+    assert mapped["degree"].value == "大学本科"
+    assert mapped["degree"].requires_confirmation is True
+    assert mapped["hukou"].value == "安徽"
+    assert mapped["hukou"].requires_confirmation is True
