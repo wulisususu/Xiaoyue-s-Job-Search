@@ -130,3 +130,32 @@ def test_browser_agent_requires_browser_agent_application_channel(client, monkey
 
     response = client.post("/api/browser-agent/sessions", json={"application_id": application_id})
     assert response.status_code == 409
+
+
+def test_browser_agent_plan_read_redacts_sensitive_profile_values():
+    from app.routes.browser_agent import _plan_read
+
+    raw = "TESTDOC-ABC1234"
+    plan = FillPlan(
+        token="secret-plan",
+        session_id="agent-secret",
+        page_url="https://ats.example.com/apply",
+        items=[
+            FillPlanItem(
+                field_id="doc",
+                label="证件号码",
+                control_type="text",
+                value=raw,
+                source_path="identity.id_number",
+                confidence=0.99,
+                reason="证件号码",
+                requires_confirmation=True,
+            )
+        ],
+        unmatched=[],
+        blocked=[],
+    )
+
+    rendered = _plan_read(plan)
+    assert rendered.items[0].value != raw
+    assert str(rendered.items[0].value).endswith("1234")

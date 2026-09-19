@@ -27,7 +27,7 @@ def test_registry_exposes_stable_non_sensitive_fields():
         "awards.summary",
     }
     assert expected.issubset(FIELD_REGISTRY)
-    assert "identity.political_status" not in FIELD_REGISTRY
+    assert all(FIELD_REGISTRY[key].sensitive is False for key in expected)
 
 
 def test_registry_validates_contact_and_list_values():

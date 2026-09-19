@@ -319,3 +319,23 @@ def test_provider_timeout_maps_to_safe_domain_error():
 def test_blank_api_key_is_rejected_upfront():
     with pytest.raises(ValueError):
         OpenAICompatibleExtractionProvider(make_config(), "   ")
+
+
+def test_sensitive_profile_fields_are_not_sent_to_ai_extraction_schema_or_prompt():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"candidates":[],"collections":[]}'}}]},
+        )
+
+    make_provider(handler).extract("resume")
+    body = captured["body"]
+    system_prompt = body["messages"][0]["content"]
+    scalar_schema = body["response_format"]["json_schema"]["schema"]["properties"]["candidates"]["items"]
+    allowed = scalar_schema["properties"]["field_key"]["enum"]
+
+    assert "identity.id_number" not in system_prompt
+    assert "identity.id_number" not in allowed
