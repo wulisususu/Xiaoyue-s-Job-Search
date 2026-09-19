@@ -27,7 +27,7 @@ _DEFINITIONS = [
     FieldDefinition("identity.birth_date", "出生日期", "身份信息", "string"),
     FieldDefinition("identity.id_type", "证件类型", "身份信息", "string"),
     FieldDefinition("identity.id_number", "证件号码", "身份信息", "string", sensitive=True),
-    FieldDefinition("identity.political_status", "政治面貌", "身份信息", "string"),
+    FieldDefinition("identity.political_status", "政治面貌", "身份信息", "string", sensitive=True),
     FieldDefinition("contact.phone", "手机号", "联系方式", "string"),
     FieldDefinition("contact.email", "邮箱", "联系方式", "string"),
     FieldDefinition("education.school", "学校", "教育经历", "string"),
@@ -72,8 +72,10 @@ def mask_profile_value(field_key: str, value: Any) -> Any:
     if not definition.sensitive:
         return value
     normalized = _non_empty_string(value, field_key)
-    visible = min(4, len(normalized))
-    return ("*" * max(4, len(normalized) - visible)) + normalized[-visible:]
+    if field_key == "identity.id_number":
+        visible = min(4, len(normalized))
+        return ("*" * max(4, len(normalized) - visible)) + normalized[-visible:]
+    return "••••"
 
 
 def validate_profile_value(field_key: str, value: Any) -> Any:
