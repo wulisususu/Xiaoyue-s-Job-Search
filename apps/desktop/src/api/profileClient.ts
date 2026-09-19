@@ -8,6 +8,7 @@ export interface ProfileDefinition {
   category: string;
   value_type: string;
   multiple: boolean;
+  sensitive: boolean;
 }
 
 export interface ProfileField {
@@ -20,6 +21,7 @@ export interface ProfileField {
   source_ref: string | null;
   confidence: number | null;
   confirmed: boolean;
+  secret_configured: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -522,7 +522,7 @@ export function ProfilePage() {
         const nextEditValues: Record<string, string> = {};
         for (const definition of nextDefinitions) {
           const field = nextFields.find((item) => item.field_key === definition.field_key);
-          nextEditValues[definition.field_key] = valueToEditorText(field?.value);
+          nextEditValues[definition.field_key] = definition.sensitive ? '' : valueToEditorText(field?.value);
         }
         setEditValues(nextEditValues);
       })
@@ -562,7 +562,7 @@ export function ProfilePage() {
       setFields((items) => upsertField(items, saved));
       setEditValues((items) => ({
         ...items,
-        [definition.field_key]: valueToEditorText(saved.value),
+        [definition.field_key]: definition.sensitive ? '' : valueToEditorText(saved.value),
       }));
       setMessage(`${definition.label}已保存并写入 Profile SSOT。`);
     } catch (reason) {
@@ -820,8 +820,13 @@ export function ProfilePage() {
                             ) : (
                               <input
                                 aria-label={definition.label}
-                                type="text"
-                                placeholder={`填写${definition.label}`}
+                                type={definition.sensitive ? 'password' : 'text'}
+                                autoComplete={definition.sensitive ? 'off' : undefined}
+                                placeholder={
+                                  definition.sensitive && field?.secret_configured
+                                    ? '已安全保存；输入新值可替换'
+                                    : `填写${definition.label}`
+                                }
                                 value={editValues[definition.field_key] ?? ''}
                                 onChange={(event) =>
                                   setEditValues((items) => ({
