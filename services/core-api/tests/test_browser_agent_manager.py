@@ -9,7 +9,7 @@ from app.browser_agent.manager import BrowserAgentManager
 from app.browser_agent.models import FormFieldDescriptor, FormScan
 from app.config import get_settings
 from app.db import get_engine
-from app.models import ApplicationEvent, ApplicationSession, Company, Job, ProfileField
+from app.models import ApplicationEvent, ApplicationSession, Company, Job, ProfileField, ResumeVersion
 
 
 class FakeEdgeBackend:
@@ -361,3 +361,124 @@ def test_real_manager_propagates_post_fill_readback_failure(client, monkeypatch)
     assert result["failed_count"] == 1
     assert result["results"][0]["status"] == "FAILED"
     assert result["results"][0]["reason"] == "VALUE_REVERTED"
+
+
+class FakeMokaUploadBackend(FakeEdgeBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_url = "https://app.mokahr.com/apply/acme/site#/job/1/apply"
+        self.uploaded: tuple[str, Path] | None = None
+
+    def scan(self, handle):
+        return FormScan(
+            url=self.current_url,
+            title="Moka 职位申请",
+            fields=[
+                FormFieldDescriptor(
+                    field_id="resume-file",
+                    tag="input",
+                    input_type="file",
+                    label="上传简历",
+                    name="resume",
+                    placeholder="",
+                    aria_label="",
+                    section="简历",
+                    required=True,
+                    options=[],
+                ),
+            ],
+            target_id="target-1",
+        )
+
+    def upload_file(self, handle, field_id: str, file_path: Path):
+        self.uploaded = (field_id, file_path)
+        return {"filename": file_path.name, "size": file_path.stat().st_size, "type": "application/pdf"}
+
+
+def _seed_resume_version() -> str:
+    settings = get_settings()
+    resume_id = "resume-upload-test"
+    relpath = Path("resumes") / "upload-test-sha" / "original.pdf"
+    source = settings.vault_dir / relpath
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"%PDF-test-upload")
+
+    engine = get_engine(settings)
+    try:
+        with Session(engine) as session:
+            session.add(
+                ResumeVersion(
+                    id=resume_id,
+                    sha256="a" * 64,
+                    original_filename="赵新悦-央企简历.pdf",
+                    file_ext=".pdf",
+                    mime_type="application/pdf",
+                    size_bytes=source.stat().st_size,
+                    vault_relpath=relpath.as_posix(),
+                    version_number=99,
+                    extraction_status="EXTRACTED",
+                )
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+    return resume_id
+
+
+def test_manager_uploads_only_explicit_resume_version_to_current_moka_plan(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    resume_id = _seed_resume_version()
+    backend = FakeMokaUploadBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+    assert plan.adapter_id == "moka"
+    assert [(item.field_id, item.kind) for item in plan.attachments] == [("resume-file", "resume")]
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    with pytest.raises(BrowserAgentPlanError, match="计划已失效"):
+        manager.upload_resume(info.id, "stale-token", "resume-file", resume_id)
+
+    result = manager.upload_resume(info.id, plan.token, "resume-file", resume_id)
+    assert result["status"] == "VERIFIED"
+    assert result["resume_version_id"] == resume_id
+    assert result["filename"] == "赵新悦-央企简历.pdf"
+    assert backend.uploaded is not None
+    assert backend.uploaded[0] == "resume-file"
+    staged_path = backend.uploaded[1]
+    assert staged_path.is_file()
+    assert "browser-agent" in str(staged_path)
+    assert "uploads" in str(staged_path)
+
+    assert manager.close(info.id) is True
+    assert not staged_path.exists()
+
+
+def test_manager_rejects_resume_upload_after_page_revision_changes(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    resume_id = _seed_resume_version()
+    backend = FakeMokaUploadBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+    backend.title = "changed"
+
+    # Make the scan structure change without changing the URL.
+    original_scan = backend.scan
+    def changed_scan(handle):
+        scan = original_scan(handle)
+        scan.title = "Moka 新步骤"
+        return scan
+    backend.scan = changed_scan
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+    with pytest.raises(BrowserAgentPlanError, match="页面结构已变化"):
+        manager.upload_resume(info.id, plan.token, "resume-file", resume_id)
+    assert backend.uploaded is None
