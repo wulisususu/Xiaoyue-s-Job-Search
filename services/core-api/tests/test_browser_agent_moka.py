@@ -22,6 +22,8 @@ from app.browser_agent.models import ConfirmedProfileSnapshot, FormFieldDescript
         ("projectInfo[3].projectName", "collections.project[3].name"),
         ("languageInfo[0].language", "collections.language[0].name"),
         ("awardInfo[0].awardName", "collections.award[0].name"),
+        ("educationInfo_1_school", "collections.education[1].school"),
+        ("form_basicInfo_phone", "contact.phone"),
     ],
 )
 def test_moka_source_path_maps_documented_native_paths(raw_name, expected):
@@ -43,7 +45,13 @@ def test_moka_source_path_refuses_ambiguous_or_unsupported_fields(raw_name):
     assert moka_source_path(raw_name) is None
 
 
-def _field(field_id: str, name: str, label: str = "学校") -> FormFieldDescriptor:
+def _field(
+    field_id: str,
+    name: str,
+    label: str = "学校",
+    *,
+    dom_id: str = "",
+) -> FormFieldDescriptor:
     return FormFieldDescriptor(
         field_id=field_id,
         tag="input",
@@ -55,6 +63,7 @@ def _field(field_id: str, name: str, label: str = "学校") -> FormFieldDescript
         section="教育经历",
         required=True,
         options=[],
+        dom_id=dom_id,
     )
 
 
@@ -118,3 +127,21 @@ def test_moka_known_native_field_with_missing_ssot_value_stays_unmatched():
 
     assert plan.items == []
     assert [item.field_id for item in plan.unmatched] == ["major"]
+
+
+def test_moka_scan_uses_dom_id_when_react_control_has_no_name_attribute():
+    raw_scan = FormScan(
+        url="https://app.mokahr.com/apply/acme/site#/job/1/apply",
+        title="职位申请",
+        fields=[
+            _field(
+                "school",
+                "",
+                dom_id="educationInfo_1_school",
+            )
+        ],
+    )
+    adapter = select_browser_adapter(raw_scan.url)
+    adapted = adapt_scan_for_browser_adapter(adapter, raw_scan)
+
+    assert adapted.fields[0].adapter_source_path == "collections.education[1].school"
