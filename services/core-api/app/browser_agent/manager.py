@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..ai.secrets import CredentialStoreUnavailableError, get_secret_store
-from ..application_lifecycle import transition_application
+from ..application_lifecycle import record_resume_linked, transition_application
 from ..config import get_settings
 from ..db import get_engine
 from ..models import AIProviderConfig, ApplicationSession, Job, ResumeVersion
@@ -443,12 +443,26 @@ class BrowserAgentManager:
                 upload_path = runtime.upload_dir / filename
                 shutil.copy2(source, upload_path)
 
+                application = db.get(ApplicationSession, runtime.info.application_id)
+                if application is None:
+                    raise BrowserAgentSessionNotFoundError(
+                        f"Application {runtime.info.application_id} not found"
+                    )
+
                 result = self._backend.upload_file(runtime.handle, field_id, upload_path)
                 observed_name = str(result.get("filename") or "")
                 if observed_name != filename:
                     raise BrowserAgentPlanError(
                         "浏览器未确认所选简历文件名，请重新扫描后重试。"
                     )
+
+                record_resume_linked(
+                    db,
+                    application,
+                    resume_version_id,
+                    filename=filename,
+                )
+                db.commit()
         finally:
             engine.dispose()
 
