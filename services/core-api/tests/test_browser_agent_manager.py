@@ -187,6 +187,7 @@ def test_real_manager_uses_confirmed_ssot_blocks_sensitive_fields_and_updates_cr
                 "observed": "赵新悦",
                 "status": "VERIFIED",
                 "reason": "READBACK_MATCH",
+                "source_path": "identity.name",
             }
         ],
         "status": "VERIFIED",
