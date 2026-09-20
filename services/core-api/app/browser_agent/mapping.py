@@ -253,11 +253,13 @@ def build_fill_plan(
     *,
     session_id: str = "",
     token: str | None = None,
+    page_revision: str = "",
 ) -> FillPlan:
     plan = FillPlan(
         token=token or uuid.uuid4().hex,
         session_id=session_id,
         page_url=scan.url,
+        page_revision=page_revision,
     )
 
     collection_offsets: dict[tuple[str, str], int] = {}
