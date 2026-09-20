@@ -603,6 +603,9 @@ function adapterLimitationLabel(value: string): string {
     moka_custom_fields: 'Moka 自定义字段',
     beisen_custom_fields: '北森自定义字段',
     high_risk_declarations: '家庭/亲属/证件等高风险声明',
+    feishu_customized_data: '飞书自定义人才字段',
+    high_risk_identity_fields: '证件等高风险身份字段',
+    works_project_disambiguation: '作品/项目归类',
     iframe_forms: 'iframe 表单',
     multi_step_navigation: '多步骤自动导航',
     auto_submit: '自动提交',
@@ -615,6 +618,7 @@ function adapterImplementationLabel(value: string): string {
   if (value === 'generic_dom') return '通用 DOM 兼容层';
   if (value === 'moka_dom_v1') return 'Moka 专项 DOM v1';
   if (value === 'beisen_dom_v1') return '北森专项 DOM v1';
+  if (value === 'feishu_dom_v1') return '飞书招聘专项 DOM v1';
   return value;
 }
 
