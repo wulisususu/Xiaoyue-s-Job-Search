@@ -103,7 +103,7 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
   expect(screen.getByText('location.hukou')).toBeInTheDocument();
   expect(screen.getByText(/紧急联系人/)).toBeInTheDocument();
   expect(screen.getByText(/不会点击提交按钮/)).toBeInTheDocument();
-  expect(screen.getByText(/Moka/)).toBeInTheDocument();
+  expect(screen.getByText('Moka', { selector: 'strong' })).toBeInTheDocument();
   expect(screen.getByText(/Moka 专项 DOM v1/)).toBeInTheDocument();
   expect(screen.getByText(/附件上传、级联选择、实习\/工作经历归类、自动提交/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'AI 补全未匹配' })).toBeInTheDocument();
