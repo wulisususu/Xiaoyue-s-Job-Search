@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from ..verification.ats import detect_ats
 from .beisen import apply_beisen_scan_hints
+from .feishu import apply_feishu_scan_hints
 from .moka import apply_moka_scan_hints
 from .models import FormScan
 
@@ -98,9 +99,23 @@ _ADAPTERS: dict[str, BrowserATSAdapter] = {
     "feishu": BrowserATSAdapter(
         id="feishu",
         display_name="飞书招聘",
-        implementation="generic_dom",
-        capabilities=_GENERIC_CAPABILITIES,
-        limitations=_GENERIC_LIMITATIONS,
+        implementation="feishu_dom_v1",
+        capabilities=(
+            *_GENERIC_CAPABILITIES,
+            "feishu_talent_paths",
+            "indexed_repeatable_mapping",
+        ),
+        limitations=(
+            "file_upload",
+            "cascading_select",
+            "repeatable_sections_without_native_paths",
+            "feishu_customized_data",
+            "high_risk_identity_fields",
+            "works_project_disambiguation",
+            "iframe_forms",
+            "multi_step_navigation",
+            "auto_submit",
+        ),
     ),
     "hotjob": BrowserATSAdapter(
         id="hotjob",
@@ -136,4 +151,6 @@ def adapt_scan_for_browser_adapter(
         return apply_moka_scan_hints(scan)
     if adapter.id == "beisen":
         return apply_beisen_scan_hints(scan)
+    if adapter.id == "feishu":
+        return apply_feishu_scan_hints(scan)
     return scan
