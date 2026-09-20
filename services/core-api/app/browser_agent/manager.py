@@ -296,10 +296,29 @@ class BrowserAgentManager:
         finally:
             engine.dispose()
 
+        verified_count = int(result.get("verified_count", 0))
+        failed_count = int(result.get("failed_count", 0))
+        uncertain_count = int(result.get("uncertain_count", 0))
+        raw_results = result.get("results")
+        field_results = raw_results if isinstance(raw_results, list) else []
+
+        if failed_count:
+            status = "FILLED_WITH_FAILURES"
+        elif uncertain_count:
+            status = "FILLED_UNCERTAIN"
+        elif verified_count:
+            status = "VERIFIED"
+        else:
+            status = "NO_VERIFIED_CHANGES"
+
         return {
             "filled_count": int(result.get("filled_count", 0)),
             "skipped_count": int(result.get("skipped_count", 0)),
-            "status": "FILLED",
+            "verified_count": verified_count,
+            "failed_count": failed_count,
+            "uncertain_count": uncertain_count,
+            "results": [item for item in field_results if isinstance(item, dict)],
+            "status": status,
         }
 
     def confirm_browser_verification(self, session_id: str) -> dict[str, Any]:
