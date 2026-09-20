@@ -26,6 +26,7 @@ class FormFieldDescriptor:
     options: list[str]
     disabled: bool = False
     readonly: bool = False
+    dom_id: str = ""
     adapter_source_path: str = ""
 
 
