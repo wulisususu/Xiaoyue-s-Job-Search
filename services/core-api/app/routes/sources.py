@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import SourceSnapshot, SourceSyncRun
+from ..models import SourceSyncRun
 from ..sources.store import latest_good_snapshot
 from ..sources.sync import SyncResult, sync_due_sources, sync_tencent_source, sync_workfind_bundle
 
