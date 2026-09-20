@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from sqlalchemy.orm import Session
 
 from app.browser_agent.models import BrowserAgentSessionInfo, FillPlan, FillPlanItem, FormFieldDescriptor
@@ -16,13 +14,14 @@ class FakeBrowserAgentManager:
         self.filled = None
         self.closed = None
 
-    def start_for_application(self, application_id: int):
+    def start_for_application(self, application_id: int, *, mode: str = "fill"):
         return BrowserAgentSessionInfo(
             id="agent-1",
             application_id=application_id,
             url="https://ats.example.com/apply",
             status="READY",
             browser="Microsoft Edge",
+            mode=mode,
         )
 
     def list_sessions(self):
@@ -57,7 +56,34 @@ class FakeBrowserAgentManager:
 
     def fill(self, session_id: str, plan_token: str, field_ids: list[str]):
         self.filled = (session_id, plan_token, field_ids)
-        return {"filled_count": len(field_ids), "skipped_count": 0, "status": "FILLED"}
+        return {
+            "filled_count": len(field_ids),
+            "skipped_count": 0,
+            "verified_count": len(field_ids),
+            "failed_count": 0,
+            "uncertain_count": 0,
+            "results": [
+                {
+                    "field_id": field_id,
+                    "source_path": "identity.name",
+                    "requested": "赵新悦",
+                    "observed": "赵新悦",
+                    "status": "VERIFIED",
+                    "reason": "READBACK_MATCH",
+                }
+                for field_id in field_ids
+            ],
+            "status": "VERIFIED",
+        }
+
+    def confirm_browser_verification(self, session_id: str):
+        return {
+            "verified": True,
+            "job_status": "VERIFIED_OPEN",
+            "page_url": "https://ats.example.com/apply/form",
+            "evidence_count": 2,
+            "page_revision": "revision-1",
+        }
 
     def close(self, session_id: str):
         self.closed = session_id
@@ -100,6 +126,7 @@ def test_browser_agent_api_exposes_plan_then_fills_only_approved_plan_fields(cli
     started = client.post("/api/browser-agent/sessions", json={"application_id": application_id})
     assert started.status_code == 200
     assert started.json()["id"] == "agent-1"
+    assert started.json()["mode"] == "fill"
 
     plan = client.post("/api/browser-agent/sessions/agent-1/plan")
     assert plan.status_code == 200
@@ -121,6 +148,8 @@ def test_browser_agent_api_exposes_plan_then_fills_only_approved_plan_fields(cli
     )
     assert filled.status_code == 200
     assert filled.json()["filled_count"] == 1
+    assert filled.json()["verified_count"] == 1
+    assert filled.json()["results"][0]["status"] == "VERIFIED"
     assert manager.filled == ("agent-1", "plan-ai", ["xy-1"])
 
 
@@ -159,3 +188,21 @@ def test_browser_agent_plan_read_redacts_sensitive_profile_values():
     rendered = _plan_read(plan)
     assert rendered.items[0].value != raw
     assert str(rendered.items[0].value).endswith("1234")
+
+
+def test_browser_agent_api_allows_verify_mode_before_verified_open(client, monkeypatch):
+    application_id = seed_application(status="DISCOVERED_URL_UNVERIFIED")
+    manager = FakeBrowserAgentManager()
+    monkeypatch.setattr(browser_routes, "get_browser_agent_manager", lambda: manager)
+
+    started = client.post(
+        "/api/browser-agent/sessions",
+        json={"application_id": application_id, "mode": "verify"},
+    )
+    assert started.status_code == 200
+    assert started.json()["mode"] == "verify"
+
+    confirmed = client.post("/api/browser-agent/sessions/agent-1/verify")
+    assert confirmed.status_code == 200
+    assert confirmed.json()["verified"] is True
+    assert confirmed.json()["job_status"] == "VERIFIED_OPEN"
