@@ -305,7 +305,16 @@ export function ApplicationsPage() {
                       {plan && (
                         <div className="agent-plan">
                           <div className="agent-safety-note">
+                            <strong>{plan.adapter_display_name}</strong>
+                            {' · '}
+                            {plan.adapter_implementation === 'generic_dom' ? '通用 DOM 兼容层' : plan.adapter_implementation}
+                            {' · '}
                             只会填写你勾选的字段；密码、附件、提交控件会被阻断。Browser Agent <strong>不会点击提交按钮</strong>。
+                            {plan.adapter_limitations.length > 0 && (
+                              <small className="agent-adapter-limitations">
+                                当前仍需人工：{plan.adapter_limitations.map(adapterLimitationLabel).join('、')}
+                              </small>
+                            )}
                           </div>
                           <div className="agent-plan-list">
                             {plan.items.map((item) => {
@@ -411,4 +420,17 @@ function fillResultLabel(status: BrowserFillFieldResult['status']): string {
 
 function fillResultBadgeClass(status: BrowserFillFieldResult['status']): string {
   return status === 'VERIFIED' ? 'verified' : 'warning';
+}
+
+
+function adapterLimitationLabel(value: string): string {
+  const labels: Record<string, string> = {
+    file_upload: '附件上传',
+    cascading_select: '级联选择',
+    repeatable_sections: '重复经历区块',
+    iframe_forms: 'iframe 表单',
+    multi_step_navigation: '多步骤自动导航',
+    auto_submit: '自动提交',
+  };
+  return labels[value] ?? value;
 }
