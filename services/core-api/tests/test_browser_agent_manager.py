@@ -21,6 +21,7 @@ class FakeEdgeBackend:
         self.closed = False
         self.current_url = "https://ats.example.com/apply/form"
         self.name_input_type = "text"
+        self.name_label = "姓名"
 
     def start(self, url: str, profile_dir: Path):
         self.started = (url, profile_dir)
@@ -35,7 +36,7 @@ class FakeEdgeBackend:
                     field_id="name",
                     tag="input",
                     input_type=self.name_input_type,
-                    label="姓名",
+                    label=self.name_label,
                     name="realName",
                     placeholder="",
                     aria_label="",
@@ -56,6 +57,7 @@ class FakeEdgeBackend:
                     options=[],
                 ),
             ],
+            target_id="target-1",
         )
 
     def fill(self, handle, values):
@@ -195,5 +197,26 @@ def test_real_manager_rejects_plan_after_navigation_or_control_type_change(clien
     backend.current_url = plan.page_url
     backend.name_input_type = "password"
     with pytest.raises(BrowserAgentPlanError, match="页面控件已变化"):
+        manager.fill(info.id, plan.token, ["name"])
+    assert backend.filled is None
+
+
+def test_real_manager_rejects_plan_when_same_url_spa_structure_changes(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    backend = FakeEdgeBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+    assert plan.page_revision
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    # Same URL, same field id and same input type, but the SPA replaced the
+    # semantic structure of the page. The old plan must not be reused.
+    backend.name_label = "紧急联系人姓名"
+    with pytest.raises(BrowserAgentPlanError, match="页面结构已变化"):
         manager.fill(info.id, plan.token, ["name"])
     assert backend.filled is None
