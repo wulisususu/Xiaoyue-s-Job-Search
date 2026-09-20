@@ -30,6 +30,8 @@ class EdgeHandle:
     port: int
     profile_dir: Path
     entry_url: str
+    target_id: str = ""
+    websocket_url: str = ""
 
 
 def _pick_free_port() -> int:
@@ -311,6 +313,7 @@ class EdgeBrowserBackend:
         handle = EdgeHandle(process=process, port=port, profile_dir=profile_dir, entry_url=url)
         try:
             self._wait_ready(handle)
+            self._bind_page_target(handle)
         except Exception:
             self.close(handle)
             raise
@@ -338,22 +341,57 @@ class EdgeBrowserBackend:
             response.raise_for_status()
             return response.json()
 
-    def _page_websocket(self, handle: EdgeHandle) -> str:
+    def _page_targets(self, handle: EdgeHandle) -> list[dict[str, Any]]:
         targets = self._json(handle, "/json/list")
         if not isinstance(targets, list):
             raise BrowserControlError("DevTools target list is invalid")
-        pages = [
+        return [
             target for target in targets
             if isinstance(target, dict)
             and target.get("type") == "page"
             and isinstance(target.get("webSocketDebuggerUrl"), str)
             and not str(target.get("url", "")).startswith(("devtools://", "chrome://"))
         ]
+
+    def _bind_page_target(self, handle: EdgeHandle) -> str:
+        """Bind the session to one CDP page target exactly once.
+
+        Login/OAuth/help popups may create extra tabs. They must never silently
+        steal Browser Agent control from the page that this session opened.
+        """
+        pages = self._page_targets(handle)
         if not pages:
             raise BrowserControlError("未找到可控制的招聘页面，请确认受控浏览器窗口仍然打开。")
-        non_blank = [page for page in pages if str(page.get("url", "")) not in {"", "about:blank", "edge://newtab/"}]
-        target = (non_blank or pages)[-1]
-        return str(target["webSocketDebuggerUrl"])
+        exact = [page for page in pages if str(page.get("url", "")) == handle.entry_url]
+        non_blank = [
+            page for page in pages
+            if str(page.get("url", "")) not in {"", "about:blank", "edge://newtab/"}
+        ]
+        target = (exact or non_blank or pages)[-1]
+        target_id = str(target.get("id") or "")
+        websocket_url = str(target.get("webSocketDebuggerUrl") or "")
+        if not target_id or not websocket_url:
+            raise BrowserControlError("招聘页面缺少可绑定的 DevTools target。")
+        handle.target_id = target_id
+        handle.websocket_url = websocket_url
+        return websocket_url
+
+    def _page_websocket(self, handle: EdgeHandle) -> str:
+        if not handle.target_id:
+            return self._bind_page_target(handle)
+
+        for target in self._page_targets(handle):
+            if str(target.get("id") or "") != handle.target_id:
+                continue
+            websocket_url = str(target.get("webSocketDebuggerUrl") or "")
+            if not websocket_url:
+                break
+            handle.websocket_url = websocket_url
+            return websocket_url
+
+        raise BrowserControlError(
+            "原受控招聘页面已关闭或被替换。为避免误操作其他标签页，请重新启动 Browser Agent 会话。"
+        )
 
     def _call_ws(self, ws_url: str, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         command_id = 1
@@ -415,6 +453,7 @@ class EdgeBrowserBackend:
             url=str(payload.get("url", "")),
             title=str(payload.get("title", "")),
             fields=fields,
+            target_id=handle.target_id,
         )
 
     def fill(self, handle: EdgeHandle, values: dict[str, Any]) -> dict[str, int]:
