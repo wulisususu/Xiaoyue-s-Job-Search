@@ -311,13 +311,23 @@ class BrowserAgentManager:
         else:
             status = "NO_VERIFIED_CHANGES"
 
+        enriched_results: list[dict[str, Any]] = []
+        for item in field_results:
+            if not isinstance(item, dict):
+                continue
+            field_id = item.get("field_id")
+            expected = by_id.get(field_id) if isinstance(field_id, str) else None
+            enriched = dict(item)
+            enriched["source_path"] = expected.source_path if expected is not None else ""
+            enriched_results.append(enriched)
+
         return {
             "filled_count": int(result.get("filled_count", 0)),
             "skipped_count": int(result.get("skipped_count", 0)),
             "verified_count": verified_count,
             "failed_count": failed_count,
             "uncertain_count": uncertain_count,
-            "results": [item for item in field_results if isinstance(item, dict)],
+            "results": enriched_results,
             "status": status,
         }
 
