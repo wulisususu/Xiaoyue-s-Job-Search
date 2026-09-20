@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ApplicationRecord, getApplications, updateApplicationStatus } from '../api/applicationsClient';
+import { getResumes, type ResumeVersion } from '../api/resumesClient';
 import {
   closeBrowserAgentSession,
   confirmBrowserAgentVerification,
@@ -9,7 +10,9 @@ import {
   getBrowserFillPlan,
   getBrowserSemanticPlan,
   startBrowserAgentSession,
+  uploadBrowserAgentResume,
   type BrowserAgentSession,
+  type BrowserAttachmentPlanItem,
   type BrowserFillFieldResult,
   type BrowserFillPlan,
 } from '../api/browserAgentClient';
@@ -32,6 +35,9 @@ export function ApplicationsPage() {
   const [plans, setPlans] = useState<Record<number, BrowserFillPlan>>({});
   const [approved, setApproved] = useState<Record<number, string[]>>({});
   const [fillResults, setFillResults] = useState<Record<number, BrowserFillFieldResult[]>>({});
+  const [resumes, setResumes] = useState<ResumeVersion[]>([]);
+  const [resumeSelections, setResumeSelections] = useState<Record<string, string>>({});
+  const [uploadedResumes, setUploadedResumes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -46,10 +52,11 @@ export function ApplicationsPage() {
   const refresh = useCallback(() => {
     setLoading(true);
     setError('');
-    Promise.all([getApplications(), getBrowserAgentSessions()])
-      .then(([applicationRows, agentSessions]) => {
+    Promise.all([getApplications(), getBrowserAgentSessions(), getResumes()])
+      .then(([applicationRows, agentSessions, resumeRows]) => {
         setApplications(applicationRows);
         setSessions(agentSessions);
+        setResumes(resumeRows);
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '投递记录加载失败'))
       .finally(() => setLoading(false));
@@ -190,6 +197,37 @@ export function ApplicationsPage() {
     }
   }
 
+  async function uploadResumeAttachment(
+    applicationId: number,
+    attachment: BrowserAttachmentPlanItem,
+  ) {
+    const plan = plans[applicationId];
+    const session = sessionsByApplication.get(applicationId);
+    const key = attachmentSelectionKey(applicationId, attachment.field_id);
+    const resumeVersionId = resumeSelections[key];
+    if (!plan || !session || !resumeVersionId) return;
+
+    setAgentBusyId(applicationId);
+    setError('');
+    setMessage('');
+    try {
+      const result = await uploadBrowserAgentResume(
+        session.id,
+        plan.token,
+        attachment.field_id,
+        resumeVersionId,
+      );
+      setUploadedResumes((current) => ({ ...current, [key]: result.filename }));
+      setMessage(
+        `已将简历版本上传到“${attachment.label}”：${result.filename}。页面仍未提交，请继续人工检查。`,
+      );
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : '简历上传失败');
+    } finally {
+      setAgentBusyId(null);
+    }
+  }
+
   async function endAgent(applicationId: number) {
     const session = sessionsByApplication.get(applicationId);
     if (!session) return;
@@ -309,7 +347,7 @@ export function ApplicationsPage() {
                             {' · '}
                             {adapterImplementationLabel(plan.adapter_implementation)}
                             {' · '}
-                            只会填写你勾选的字段；密码、附件、提交控件会被阻断。Browser Agent <strong>不会点击提交按钮</strong>。
+                            只会填写你勾选的字段；密码、非受控附件、提交控件会被阻断。Browser Agent <strong>不会点击提交按钮</strong>。
                             {plan.adapter_limitations.length > 0 && (
                               <small className="agent-adapter-limitations">
                                 当前仍需人工：{plan.adapter_limitations.map(adapterLimitationLabel).join('、')}
@@ -346,6 +384,60 @@ export function ApplicationsPage() {
                               );
                             })}
                           </div>
+
+                          {plan.attachments.length > 0 && (
+                            <div className="agent-attachment-list">
+                              {plan.attachments.map((attachment) => {
+                                const key = attachmentSelectionKey(application.id, attachment.field_id);
+                                const selectedResume = resumeSelections[key] ?? '';
+                                const uploadedFilename = uploadedResumes[key];
+                                return (
+                                  <div className="agent-attachment-row" key={attachment.field_id}>
+                                    <div className="agent-plan-copy">
+                                      <strong>{attachment.label}</strong>
+                                      <small>
+                                        {attachment.required ? '必填' : '选填'} · 仅接受 Resume Vault 中已验证的 PDF/DOCX
+                                      </small>
+                                    </div>
+                                    <select
+                                      aria-label={`选择${attachment.label}版本`}
+                                      value={selectedResume}
+                                      onChange={(event) => {
+                                        const value = event.target.value;
+                                        setResumeSelections((current) => ({ ...current, [key]: value }));
+                                        setUploadedResumes((current) => {
+                                          const next = { ...current };
+                                          delete next[key];
+                                          return next;
+                                        });
+                                      }}
+                                    >
+                                      <option value="">请选择简历版本</option>
+                                      {resumes.map((resume) => (
+                                        <option key={resume.id} value={resume.id}>
+                                          v{resume.version_number} · {resume.original_filename}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      className="secondary-button"
+                                      type="button"
+                                      disabled={!selectedResume || agentBusyId === application.id}
+                                      onClick={() => uploadResumeAttachment(application.id, attachment)}
+                                    >
+                                      上传所选简历
+                                    </button>
+                                    {uploadedFilename && (
+                                      <span className="soft-badge verified">已回读：{uploadedFilename}</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {resumes.length === 0 && (
+                                <p className="agent-unmatched">Resume Vault 暂无可选版本，请先导入简历。</p>
+                              )}
+                            </div>
+                          )}
 
                           {plan.unmatched.length > 0 && (
                             <>
@@ -426,6 +518,7 @@ function fillResultBadgeClass(status: BrowserFillFieldResult['status']): string 
 function adapterLimitationLabel(value: string): string {
   const labels: Record<string, string> = {
     file_upload: '附件上传',
+    additional_attachments: '其他附件上传',
     cascading_select: '级联选择',
     repeatable_sections: '重复经历区块',
     repeatable_sections_without_native_paths: '无原生路径的重复经历区块',
@@ -443,4 +536,9 @@ function adapterImplementationLabel(value: string): string {
   if (value === 'generic_dom') return '通用 DOM 兼容层';
   if (value === 'moka_dom_v1') return 'Moka 专项 DOM v1';
   return value;
+}
+
+
+function attachmentSelectionKey(applicationId: number, fieldId: string): string {
+  return `${applicationId}:${fieldId}`;
 }
