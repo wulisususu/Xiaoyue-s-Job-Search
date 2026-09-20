@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ApplicationRecord, getApplications, updateApplicationStatus } from '../api/applicationsClient';
+import {
+  ApplicationRecord,
+  getApplicationEvents,
+  getApplications,
+  updateApplicationStatus,
+  type ApplicationEventRecord,
+} from '../api/applicationsClient';
 import {
   closeBrowserAgentSession,
   confirmBrowserAgentVerification,
@@ -24,14 +30,15 @@ const statusLabel: Record<string, string> = {
   ABANDONED: '已放弃',
 };
 
-const statusOptions = ['OPENED', 'IN_PROGRESS', 'SUBMITTED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'ABANDONED'];
-
 export function ApplicationsPage() {
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [sessions, setSessions] = useState<BrowserAgentSession[]>([]);
   const [plans, setPlans] = useState<Record<number, BrowserFillPlan>>({});
   const [approved, setApproved] = useState<Record<number, string[]>>({});
   const [fillResults, setFillResults] = useState<Record<number, BrowserFillFieldResult[]>>({});
+  const [timelineEvents, setTimelineEvents] = useState<Record<number, ApplicationEventRecord[]>>({});
+  const [expandedTimelineId, setExpandedTimelineId] = useState<number | null>(null);
+  const [timelineLoadingId, setTimelineLoadingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -64,10 +71,34 @@ export function ApplicationsPage() {
     try {
       const updated = await updateApplicationStatus(id, status);
       setApplications((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      if (expandedTimelineId === id) {
+        const events = await getApplicationEvents(id);
+        setTimelineEvents((current) => ({ ...current, [id]: events }));
+      }
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : '状态更新失败');
     } finally {
       setUpdatingId(null);
+    }
+  }
+
+  async function toggleTimeline(applicationId: number) {
+    if (expandedTimelineId === applicationId) {
+      setExpandedTimelineId(null);
+      return;
+    }
+    setExpandedTimelineId(applicationId);
+    if (timelineEvents[applicationId]) return;
+
+    setTimelineLoadingId(applicationId);
+    setError('');
+    try {
+      const events = await getApplicationEvents(applicationId);
+      setTimelineEvents((current) => ({ ...current, [applicationId]: events }));
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : '投递时间线加载失败');
+    } finally {
+      setTimelineLoadingId(null);
     }
   }
 
@@ -245,6 +276,9 @@ export function ApplicationsPage() {
               (fillResults[application.id] ?? []).map((result) => [result.field_id, result]),
             );
             const isAgent = application.channel === 'browser_agent';
+            const statusChoices = [application.status, ...application.allowed_next_statuses];
+            const events = timelineEvents[application.id] ?? [];
+            const timelineExpanded = expandedTimelineId === application.id;
             return (
               <article className="job-card application-card" key={application.id}>
                 <div className="job-card-main">
@@ -261,6 +295,42 @@ export function ApplicationsPage() {
                   <h3>{application.job_title}</h3>
                   <p className="job-verification">开始时间：{formatTime(application.opened_at)} · 最近更新：{formatTime(application.updated_at)}</p>
                   {application.opened_url && <p className="job-source">入口：{application.opened_url}</p>}
+                  {application.resume_version_id && (
+                    <p className="job-source">简历版本：<code>{application.resume_version_id}</code></p>
+                  )}
+
+                  <div className="application-history-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={timelineLoadingId === application.id}
+                      onClick={() => toggleTimeline(application.id)}
+                    >
+                      {timelineLoadingId === application.id
+                        ? '加载中…'
+                        : timelineExpanded
+                          ? '收起时间线'
+                          : '查看时间线'}
+                    </button>
+                  </div>
+
+                  {timelineExpanded && (
+                    <section className="application-timeline" aria-label="投递时间线">
+                      {events.length === 0 && timelineLoadingId !== application.id && (
+                        <p className="application-timeline-empty">暂无时间线事件。</p>
+                      )}
+                      {events.map((event) => (
+                        <article className="application-event" key={event.id}>
+                          <span className="application-event-dot" aria-hidden="true" />
+                          <div>
+                            <strong>{applicationEventLabel(event)}</strong>
+                            <small>{formatTime(event.created_at)}</small>
+                            {event.note && <p>{event.note}</p>}
+                          </div>
+                        </article>
+                      ))}
+                    </section>
+                  )}
 
                   {isAgent && (
                     <section className="agent-panel" aria-label="智能填写">
@@ -375,7 +445,7 @@ export function ApplicationsPage() {
                     disabled={updatingId === application.id}
                     onChange={(event) => changeStatus(application.id, event.target.value)}
                   >
-                    {statusOptions.map((option) => (
+                    {statusChoices.map((option) => (
                       <option key={option} value={option}>{statusLabel[option] ?? option}</option>
                     ))}
                   </select>
@@ -411,4 +481,15 @@ function fillResultLabel(status: BrowserFillFieldResult['status']): string {
 
 function fillResultBadgeClass(status: BrowserFillFieldResult['status']): string {
   return status === 'VERIFIED' ? 'verified' : 'warning';
+}
+
+
+function applicationEventLabel(event: ApplicationEventRecord): string {
+  if (event.event_type === 'CREATED') return '创建投递记录';
+  if (event.event_type === 'STATUS_CHANGED') {
+    const from = event.from_status ? statusLabel[event.from_status] ?? event.from_status : '未知';
+    const to = statusLabel[event.to_status] ?? event.to_status;
+    return `${from} → ${to}`;
+  }
+  return event.event_type;
 }
