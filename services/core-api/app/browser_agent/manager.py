@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..ai.secrets import CredentialStoreUnavailableError, get_secret_store
+from ..application_lifecycle import transition_application
 from ..config import get_settings
 from ..db import get_engine
 from ..models import AIProviderConfig, ApplicationSession, Job
@@ -291,7 +292,12 @@ class BrowserAgentManager:
             with Session(engine) as db:
                 application = db.get(ApplicationSession, runtime.info.application_id)
                 if application is not None and application.status == "OPENED":
-                    application.status = "IN_PROGRESS"
+                    transition_application(
+                        db,
+                        application,
+                        "IN_PROGRESS",
+                        note="Browser Agent started filling confirmed fields",
+                    )
                     db.commit()
         finally:
             engine.dispose()
