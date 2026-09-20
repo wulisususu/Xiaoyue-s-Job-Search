@@ -6,15 +6,15 @@ import httpx
 import pytest
 
 from app.ai.json_client import OpenAICompatibleJSONClient
-from app.ai.errors import ProviderResponseError
+from app.ai.errors import ProviderRequestError, ProviderResponseError
 from app.models import AIProviderConfig
 
 
-def config(*, supports_json_schema: bool = True):
+def config(*, supports_json_schema: bool = True, base_url: str = "https://example.com/v1"):
     return AIProviderConfig(
         id="default",
         provider_name="Test",
-        base_url="https://example.com/v1",
+        base_url=base_url,
         text_model="test-model",
         vision_model=None,
         temperature=0.1,
@@ -75,3 +75,26 @@ def test_generic_json_client_rejects_non_json_completion():
             schema_name="ignored",
             schema={"type": "object"},
         )
+
+
+def test_generic_json_client_rejects_legacy_remote_http_before_sending_api_key():
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = OpenAICompatibleJSONClient(
+        config(base_url="http://example.com/v1"),
+        "sk-must-not-leak",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ProviderRequestError, match="must use HTTPS"):
+        client.complete_json(
+            messages=[{"role": "user", "content": "map"}],
+            schema_name="test",
+            schema={"type": "object"},
+        )
+
+    assert called is False
