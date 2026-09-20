@@ -22,6 +22,7 @@ class FakeEdgeBackend:
         self.current_url = "https://ats.example.com/apply/form"
         self.name_input_type = "text"
         self.name_label = "姓名"
+        self.title = "申请表"
 
     def start(self, url: str, profile_dir: Path):
         self.started = (url, profile_dir)
@@ -30,7 +31,7 @@ class FakeEdgeBackend:
     def scan(self, handle):
         return FormScan(
             url=self.current_url,
-            title="申请表",
+            title=self.title,
             fields=[
                 FormFieldDescriptor(
                     field_id="name",
@@ -68,7 +69,7 @@ class FakeEdgeBackend:
         self.closed = True
 
 
-def _seed_application_and_profile() -> int:
+def _seed_application_and_profile(*, job_status: str = "VERIFIED_OPEN") -> int:
     engine = get_engine(get_settings())
     try:
         with Session(engine) as session:
@@ -85,7 +86,7 @@ def _seed_application_and_profile() -> int:
                 deadline_text="招满即止",
                 apply_url="https://ats.example.com/apply",
                 canonical_url="https://ats.example.com/apply",
-                status="VERIFIED_OPEN",
+                status=job_status,
                 fingerprint="fp-agent-manager",
             )
             session.add(job)
@@ -220,3 +221,70 @@ def test_real_manager_rejects_plan_when_same_url_spa_structure_changes(client, m
     with pytest.raises(BrowserAgentPlanError, match="页面结构已变化"):
         manager.fill(info.id, plan.token, ["name"])
     assert backend.filled is None
+
+
+def test_verify_mode_breaks_static_verification_deadlock_and_promotes_job(client, monkeypatch):
+    application_id = _seed_application_and_profile(job_status="DISCOVERED_URL_UNVERIFIED")
+    backend = FakeEdgeBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentConflictError
+
+    with pytest.raises(BrowserAgentConflictError, match="VERIFIED_OPEN"):
+        manager.start_for_application(application_id, mode="fill")
+
+    info = manager.start_for_application(application_id, mode="verify")
+    assert info.mode == "verify"
+
+    with pytest.raises(BrowserAgentConflictError, match="Verify-mode"):
+        manager.build_plan(info.id)
+
+    result = manager.confirm_browser_verification(info.id)
+    assert result["verified"] is True
+    assert result["job_status"] == "VERIFIED_OPEN"
+    assert result["evidence_count"] >= 1
+    assert info.mode == "fill"
+
+    # The same live browser session becomes fill-capable only after browser
+    # evidence has promoted the job.
+    plan = manager.build_plan(info.id)
+    assert plan.page_revision
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            application = session.get(ApplicationSession, application_id)
+            assert application is not None
+            job = session.get(Job, application.job_id)
+            assert job is not None
+            assert job.status == "VERIFIED_OPEN"
+    finally:
+        engine.dispose()
+
+
+def test_verify_mode_refuses_login_page_as_application_evidence(client, monkeypatch):
+    application_id = _seed_application_and_profile(job_status="DISCOVERED_URL_UNVERIFIED")
+    backend = FakeEdgeBackend()
+    backend.title = "招聘系统登录"
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    info = manager.start_for_application(application_id, mode="verify")
+    with pytest.raises(BrowserAgentPlanError, match="实际申请表"):
+        manager.confirm_browser_verification(info.id)
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            application = session.get(ApplicationSession, application_id)
+            assert application is not None
+            job = session.get(Job, application.job_id)
+            assert job is not None
+            assert job.status == "DISCOVERED_URL_UNVERIFIED"
+    finally:
+        engine.dispose()
