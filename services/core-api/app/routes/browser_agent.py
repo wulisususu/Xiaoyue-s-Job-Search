@@ -141,6 +141,49 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
     )
 
 
+def _mask_fill_result_value(source_path: str, value: object) -> object:
+    if source_path.startswith("collections.") or value is None or value == "":
+        return value
+    try:
+        definition = get_field_definition(source_path)
+    except KeyError:
+        return value
+    if not definition.sensitive:
+        return value
+    # Do not let post-fill read-back undo the masking guarantee enforced by
+    # FillPlanRead. Sensitive values stay local even after DOM verification.
+    return mask_profile_value(source_path, value)
+
+
+def _fill_result_read(result: dict[str, object]) -> FillResultRead:
+    raw_results = result.get("results")
+    rows: list[FillFieldResultRead] = []
+    if isinstance(raw_results, list):
+        for raw in raw_results:
+            if not isinstance(raw, dict):
+                continue
+            source_path = raw.get("source_path")
+            path = source_path if isinstance(source_path, str) else ""
+            rows.append(
+                FillFieldResultRead(
+                    field_id=str(raw.get("field_id", "")),
+                    requested=_mask_fill_result_value(path, raw.get("requested")),
+                    observed=_mask_fill_result_value(path, raw.get("observed")),
+                    status=str(raw.get("status", "")),
+                    reason=str(raw.get("reason", "")),
+                )
+            )
+    return FillResultRead(
+        filled_count=int(result.get("filled_count", 0)),
+        skipped_count=int(result.get("skipped_count", 0)),
+        verified_count=int(result.get("verified_count", 0)),
+        failed_count=int(result.get("failed_count", 0)),
+        uncertain_count=int(result.get("uncertain_count", 0)),
+        results=rows,
+        status=str(result.get("status", "")),
+    )
+
+
 def _validate_application(application_id: int, mode: str) -> None:
     engine = get_engine(get_settings())
     try:
@@ -226,7 +269,7 @@ def build_browser_agent_semantic_plan(session_id: str, body: SemanticPlanRequest
 def fill_browser_agent_plan(session_id: str, body: FillRequest) -> FillResultRead:
     try:
         result = get_browser_agent_manager().fill(session_id, body.plan_token, body.field_ids)
-        return FillResultRead(**result)
+        return _fill_result_read(result)
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentPlanError as exc:
