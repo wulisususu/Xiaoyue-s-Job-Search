@@ -6,6 +6,7 @@ export interface BrowserAgentSession {
   url: string;
   status: string;
   browser: string;
+  mode: 'verify' | 'fill';
 }
 
 export interface BrowserFillPlanItem {
@@ -29,6 +30,7 @@ export interface BrowserFillPlan {
   token: string;
   session_id: string;
   page_url: string;
+  page_revision: string;
   items: BrowserFillPlanItem[];
   unmatched: BrowserPlanFieldSummary[];
   blocked: BrowserPlanFieldSummary[];
@@ -38,6 +40,14 @@ export interface BrowserFillResult {
   filled_count: number;
   skipped_count: number;
   status: string;
+}
+
+export interface BrowserVerificationResult {
+  verified: boolean;
+  job_status: string;
+  page_url: string;
+  evidence_count: number;
+  page_revision: string;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -57,11 +67,14 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function startBrowserAgentSession(applicationId: number): Promise<BrowserAgentSession> {
+export function startBrowserAgentSession(
+  applicationId: number,
+  mode: 'verify' | 'fill' = 'fill',
+): Promise<BrowserAgentSession> {
   return requestJson<BrowserAgentSession>('/api/browser-agent/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ application_id: applicationId }),
+    body: JSON.stringify({ application_id: applicationId, mode }),
   });
 }
 
@@ -99,6 +112,13 @@ export function fillBrowserAgentPlan(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_token: planToken, field_ids: fieldIds }),
   });
+}
+
+export function confirmBrowserAgentVerification(sessionId: string): Promise<BrowserVerificationResult> {
+  return requestJson<BrowserVerificationResult>(
+    `/api/browser-agent/sessions/${encodeURIComponent(sessionId)}/verify`,
+    { method: 'POST' },
+  );
 }
 
 export function closeBrowserAgentSession(sessionId: string): Promise<{ closed: boolean }> {
