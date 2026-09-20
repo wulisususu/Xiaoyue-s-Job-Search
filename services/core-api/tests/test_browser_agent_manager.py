@@ -9,7 +9,7 @@ from app.browser_agent.manager import BrowserAgentManager
 from app.browser_agent.models import FormFieldDescriptor, FormScan
 from app.config import get_settings
 from app.db import get_engine
-from app.models import ApplicationSession, Company, Job, ProfileField
+from app.models import ApplicationEvent, ApplicationSession, Company, Job, ProfileField
 
 
 class FakeEdgeBackend:
@@ -150,6 +150,13 @@ def test_real_manager_uses_confirmed_ssot_blocks_sensitive_fields_and_updates_cr
             application = session.get(ApplicationSession, application_id)
             assert application is not None
             assert application.status == "IN_PROGRESS"
+            events = session.query(ApplicationEvent).filter(
+                ApplicationEvent.application_id == application_id
+            ).order_by(ApplicationEvent.id).all()
+            assert [(event.from_status, event.to_status) for event in events] == [
+                ("OPENED", "IN_PROGRESS"),
+            ]
+            assert events[0].note == "Browser Agent started filling confirmed fields"
     finally:
         engine.dispose()
 
