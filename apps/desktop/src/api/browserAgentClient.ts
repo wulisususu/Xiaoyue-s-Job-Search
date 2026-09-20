@@ -20,6 +20,13 @@ export interface BrowserFillPlanItem {
   requires_confirmation: boolean;
 }
 
+export interface BrowserAttachmentPlanItem {
+  field_id: string;
+  label: string;
+  kind: string;
+  required: boolean;
+}
+
 export interface BrowserPlanFieldSummary {
   field_id: string;
   label: string;
@@ -37,6 +44,7 @@ export interface BrowserFillPlan {
   adapter_capabilities: string[];
   adapter_limitations: string[];
   items: BrowserFillPlanItem[];
+  attachments: BrowserAttachmentPlanItem[];
   unmatched: BrowserPlanFieldSummary[];
   blocked: BrowserPlanFieldSummary[];
 }
@@ -56,6 +64,13 @@ export interface BrowserFillResult {
   failed_count: number;
   uncertain_count: number;
   results: BrowserFillFieldResult[];
+  status: string;
+}
+
+export interface BrowserResumeUploadResult {
+  field_id: string;
+  resume_version_id: string;
+  filename: string;
   status: string;
 }
 
@@ -129,6 +144,26 @@ export function fillBrowserAgentPlan(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_token: planToken, field_ids: fieldIds }),
   });
+}
+
+export function uploadBrowserAgentResume(
+  sessionId: string,
+  planToken: string,
+  fieldId: string,
+  resumeVersionId: string,
+): Promise<BrowserResumeUploadResult> {
+  return requestJson<BrowserResumeUploadResult>(
+    `/api/browser-agent/sessions/${encodeURIComponent(sessionId)}/resume-upload`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        plan_token: planToken,
+        field_id: fieldId,
+        resume_version_id: resumeVersionId,
+      }),
+    },
+  );
 }
 
 export function confirmBrowserAgentVerification(sessionId: string): Promise<BrowserVerificationResult> {
