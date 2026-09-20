@@ -136,7 +136,22 @@ def moka_source_path(raw_name: str) -> str | None:
     return f"collections.{kind}[{int(index_text)}].{local_field}"
 
 
+def _moka_file_action(field: FormFieldDescriptor) -> str:
+    if (field.input_type or "").lower() != "file":
+        return ""
+    for raw in (field.name, field.dom_id):
+        value = (raw or "").strip().lower()
+        if value == "resume" or value.endswith(".resume") or value.endswith("_resume"):
+            if "attachment" not in value:
+                return "resume_upload"
+    return ""
+
+
 def _adapt_field(field: FormFieldDescriptor) -> FormFieldDescriptor:
+    action = _moka_file_action(field)
+    if action:
+        return replace(field, adapter_action=action)
+
     if field.adapter_source_path:
         return field
 
