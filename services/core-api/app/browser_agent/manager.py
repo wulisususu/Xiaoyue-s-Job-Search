@@ -102,6 +102,7 @@ def _page_revision(scan: FormScan) -> str:
                 "input_type": field.input_type,
                 "label": field.label,
                 "name": field.name,
+                "dom_id": field.dom_id,
                 "placeholder": field.placeholder,
                 "aria_label": field.aria_label,
                 "section": field.section,
