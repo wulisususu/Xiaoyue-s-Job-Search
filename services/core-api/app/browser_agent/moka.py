@@ -92,6 +92,19 @@ def _tokens(raw: str) -> list[str]:
     #   educationInfo[1][school]
     #   educationInfo.1.school
     text = re.sub(r"\[([^\[\]]+)]", r".\1", text)
+
+    # Ant Design frequently derives DOM ids from nested form names, e.g.
+    # educationInfo_1_school. Only accept underscore encoding when a known
+    # Moka module is present, keeping arbitrary element ids out of the mapper.
+    if "." not in text:
+        for module in _KNOWN_MODULES:
+            marker = module + "_"
+            position = text.find(marker)
+            if position >= 0:
+                suffix = text[position:].replace("_", ".")
+                text = suffix
+                break
+
     tokens = [part for part in text.split(".") if part]
     if not tokens:
         return []
@@ -135,7 +148,10 @@ def moka_source_path(raw_name: str) -> str | None:
 def _adapt_field(field: FormFieldDescriptor) -> FormFieldDescriptor:
     if field.adapter_source_path:
         return field
+
     hint = moka_source_path(field.name)
+    if hint is None:
+        hint = moka_source_path(field.dom_id)
     if hint is None:
         return field
     return replace(field, adapter_source_path=hint)
