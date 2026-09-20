@@ -3,6 +3,8 @@ from __future__ import annotations
 import atexit
 import hashlib
 import json
+import re
+import shutil
 import threading
 import uuid
 from dataclasses import dataclass
@@ -15,9 +17,14 @@ from ..ai.secrets import CredentialStoreUnavailableError, get_secret_store
 from ..application_lifecycle import transition_application
 from ..config import get_settings
 from ..db import get_engine
-from ..models import AIProviderConfig, ApplicationSession, Job
+from ..models import AIProviderConfig, ApplicationSession, Job, ResumeVersion
 from ..verification.service import promote_browser_verified
 from ..verification.url_guard import validate_external_url
+from .adapters import (
+    adapt_scan_for_browser_adapter,
+    get_browser_adapter,
+    select_browser_adapter,
+)
 from .cdp import BrowserControlError, BrowserUnavailableError, EdgeBrowserBackend, EdgeHandle
 from .mapping import build_fill_plan
 from .models import BrowserAgentSessionInfo, FillPlan, FormScan
@@ -50,6 +57,24 @@ _APPLICATION_FIELD_TERMS = (
 )
 _APPLICATION_TITLE_TERMS = ("申请", "应聘", "网申", "application", "career")
 _LOGIN_TITLE_TERMS = ("登录", "登陆", "login", "sign in", "signin")
+_INVALID_UPLOAD_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+def _safe_upload_filename(original_filename: str, file_ext: str) -> str:
+    raw_name = (original_filename or "resume").replace("\\", "/").rsplit("/", 1)[-1]
+    cleaned = _INVALID_UPLOAD_FILENAME.sub("_", raw_name).strip(" .")
+    stem = Path(cleaned).stem.strip(" .") or "resume"
+    if stem.upper() in _WINDOWS_RESERVED_NAMES:
+        stem = f"resume-{stem.lower()}"
+    ext = file_ext.lower()
+    if ext not in {".pdf", ".docx"}:
+        raise BrowserAgentPlanError("Browser Agent only uploads validated PDF/DOCX resume versions")
+    return f"{stem}{ext}"
 
 
 def _browser_verification_evidence(scan: FormScan) -> list[str]:
@@ -98,6 +123,7 @@ def _page_revision(scan: FormScan) -> str:
                 "input_type": field.input_type,
                 "label": field.label,
                 "name": field.name,
+                "dom_id": field.dom_id,
                 "placeholder": field.placeholder,
                 "aria_label": field.aria_label,
                 "section": field.section,
@@ -105,6 +131,8 @@ def _page_revision(scan: FormScan) -> str:
                 "options": field.options,
                 "disabled": field.disabled,
                 "readonly": field.readonly,
+                "adapter_source_path": field.adapter_source_path,
+                "adapter_action": field.adapter_action,
             }
             for field in scan.fields
         ],
@@ -118,6 +146,7 @@ class _RuntimeSession:
     info: BrowserAgentSessionInfo
     handle: EdgeHandle
     latest_plan: FillPlan | None = None
+    upload_dir: Path | None = None
 
 
 class BrowserAgentManager:
@@ -178,7 +207,11 @@ class BrowserAgentManager:
             browser=self._backend.browser_name,
             mode=mode,
         )
-        runtime = _RuntimeSession(info=info, handle=handle)
+        runtime = _RuntimeSession(
+            info=info,
+            handle=handle,
+            upload_dir=settings.data_dir / "browser-agent" / "uploads" / session_id,
+        )
         with self._lock:
             self._sessions[session_id] = runtime
             self._by_application[application_id] = session_id
@@ -200,6 +233,8 @@ class BrowserAgentManager:
         if runtime.info.mode != "fill":
             raise BrowserAgentConflictError("Verify-mode sessions cannot build or execute fill plans")
         scan = self._backend.scan(runtime.handle)
+        adapter = select_browser_adapter(scan.url or runtime.info.url)
+        scan = adapt_scan_for_browser_adapter(adapter, scan)
         engine = get_engine(get_settings())
         try:
             with Session(engine) as db:
@@ -211,6 +246,11 @@ class BrowserAgentManager:
             scan,
             session_id=session_id,
             page_revision=_page_revision(scan),
+            adapter_id=adapter.id,
+            adapter_display_name=adapter.display_name,
+            adapter_implementation=adapter.implementation,
+            adapter_capabilities=list(adapter.capabilities),
+            adapter_limitations=list(adapter.limitations),
         )
         runtime.latest_plan = plan
         runtime.info.url = scan.url or runtime.info.url
@@ -226,7 +266,10 @@ class BrowserAgentManager:
         if not plan.unmatched:
             return plan
 
-        current_scan = self._backend.scan(runtime.handle)
+        current_scan = adapt_scan_for_browser_adapter(
+            get_browser_adapter(plan.adapter_id),
+            self._backend.scan(runtime.handle),
+        )
         if current_scan.url != plan.page_url or _page_revision(current_scan) != plan.page_revision:
             raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再使用 AI 补全。")
 
@@ -266,7 +309,10 @@ class BrowserAgentManager:
         if unknown:
             raise BrowserAgentPlanError(f"填写计划不包含字段: {', '.join(unknown)}")
 
-        current_scan = self._backend.scan(runtime.handle)
+        current_scan = adapt_scan_for_browser_adapter(
+            get_browser_adapter(plan.adapter_id),
+            self._backend.scan(runtime.handle),
+        )
         if current_scan.url != plan.page_url:
             raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再填写。")
         current_fields = {field.field_id: field for field in current_scan.fields}
@@ -337,6 +383,82 @@ class BrowserAgentManager:
             "status": status,
         }
 
+    def upload_resume(
+        self,
+        session_id: str,
+        plan_token: str,
+        field_id: str,
+        resume_version_id: str,
+    ) -> dict[str, Any]:
+        runtime = self._runtime(session_id)
+        if runtime.info.mode != "fill":
+            raise BrowserAgentConflictError("Verify-mode sessions cannot upload resumes")
+        plan = runtime.latest_plan
+        if plan is None or plan.token != plan_token:
+            raise BrowserAgentPlanError("填写计划已失效，请重新扫描表单。")
+
+        attachment = next(
+            (
+                item
+                for item in plan.attachments
+                if item.field_id == field_id and item.kind == "resume"
+            ),
+            None,
+        )
+        if attachment is None:
+            raise BrowserAgentPlanError("当前填写计划不包含可上传的简历控件。")
+
+        current_scan = adapt_scan_for_browser_adapter(
+            get_browser_adapter(plan.adapter_id),
+            self._backend.scan(runtime.handle),
+        )
+        if current_scan.url != plan.page_url or _page_revision(current_scan) != plan.page_revision:
+            raise BrowserAgentPlanError("页面结构已变化，请重新扫描表单后再上传简历。")
+
+        descriptor = next((field for field in current_scan.fields if field.field_id == field_id), None)
+        if (
+            descriptor is None
+            or (descriptor.input_type or descriptor.tag).lower() != "file"
+            or descriptor.adapter_action != "resume_upload"
+        ):
+            raise BrowserAgentPlanError("目标控件不再是受控简历上传控件，请重新扫描。")
+
+        settings = get_settings()
+        engine = get_engine(settings)
+        try:
+            with Session(engine) as db:
+                resume = db.get(ResumeVersion, resume_version_id)
+                if resume is None:
+                    raise ValueError("Resume version not found")
+
+                vault_root = settings.vault_dir.resolve()
+                source = (settings.vault_dir / resume.vault_relpath).resolve()
+                if not source.is_relative_to(vault_root) or not source.is_file():
+                    raise BrowserAgentPlanError("Resume Vault file is unavailable or outside the vault")
+
+                if runtime.upload_dir is None:
+                    raise BrowserAgentPlanError("Browser Agent upload workspace is unavailable")
+                runtime.upload_dir.mkdir(parents=True, exist_ok=True)
+                filename = _safe_upload_filename(resume.original_filename, resume.file_ext)
+                upload_path = runtime.upload_dir / filename
+                shutil.copy2(source, upload_path)
+
+                result = self._backend.upload_file(runtime.handle, field_id, upload_path)
+                observed_name = str(result.get("filename") or "")
+                if observed_name != filename:
+                    raise BrowserAgentPlanError(
+                        "浏览器未确认所选简历文件名，请重新扫描后重试。"
+                    )
+        finally:
+            engine.dispose()
+
+        return {
+            "field_id": field_id,
+            "resume_version_id": resume_version_id,
+            "filename": filename,
+            "status": "VERIFIED",
+        }
+
     def confirm_browser_verification(self, session_id: str) -> dict[str, Any]:
         runtime = self._runtime(session_id)
         if runtime.info.mode != "verify":
@@ -397,6 +519,8 @@ class BrowserAgentManager:
                 return False
             self._by_application.pop(runtime.info.application_id, None)
         self._backend.close(runtime.handle)
+        if runtime.upload_dir is not None:
+            shutil.rmtree(runtime.upload_dir, ignore_errors=True)
         return True
 
     def shutdown(self) -> None:
