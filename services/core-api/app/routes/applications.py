@@ -30,6 +30,7 @@ class ApplicationRead(BaseModel):
     job_id: str
     job_title: str
     company_name: str
+    job_status: str
     status: str
     channel: str
     opened_url: str
@@ -45,6 +46,7 @@ def _read(session: Session, record: ApplicationSession) -> ApplicationRead:
         job_id=record.job_id,
         job_title=job.title if job else "",
         company_name=company.name if company else "",
+        job_status=job.status if job else "",
         status=record.status,
         channel=record.channel,
         opened_url=record.opened_url,

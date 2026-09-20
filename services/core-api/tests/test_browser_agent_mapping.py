@@ -195,3 +195,61 @@ def test_recruitment_identity_fields_map_locally_and_sensitive_document_requires
     assert mapped["id-no"].value == "TESTDOC-ABC1234"
     assert mapped["id-no"].requires_confirmation is True
     assert mapped["political"].source_path == "identity.political_status"
+
+
+def test_fill_plan_normalizes_known_option_values_to_the_exact_page_option():
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={
+            "identity.gender": "女",
+            "identity.id_type": "居民身份证",
+        },
+        collections={"education": [{"degree": "本科"}]},
+    )
+    scan = FormScan(
+        url="https://ats.example.com/apply",
+        title="网申",
+        fields=[
+            FormFieldDescriptor(
+                field_id="gender", tag="radio_group", input_type="radio_group",
+                label="性别", name="", placeholder="", aria_label="", section="",
+                required=True, options=["男性", "女性"],
+            ),
+            FormFieldDescriptor(
+                field_id="id-type", tag="div", input_type="combobox",
+                label="证件类型", name="", placeholder="请选择", aria_label="", section="",
+                required=True, options=["身份证", "护照"],
+            ),
+            FormFieldDescriptor(
+                field_id="degree", tag="select", input_type="select",
+                label="最高学历", name="", placeholder="", aria_label="", section="教育经历",
+                required=True, options=["大学本科", "硕士研究生"],
+            ),
+        ],
+    )
+
+    plan = build_fill_plan(snapshot, scan)
+    mapped = {item.field_id: item for item in plan.items}
+    assert mapped["gender"].value == "女性"
+    assert mapped["id-type"].value == "身份证"
+    assert mapped["degree"].value == "大学本科"
+
+
+def test_fill_plan_leaves_known_field_unmatched_when_page_options_are_ambiguous():
+    snapshot = ConfirmedProfileSnapshot(
+        scalars={},
+        collections={"education": [{"degree": "研究生"}]},
+    )
+    scan = FormScan(
+        url="https://ats.example.com/apply",
+        title="网申",
+        fields=[
+            FormFieldDescriptor(
+                field_id="degree", tag="select", input_type="select",
+                label="最高学历", name="", placeholder="", aria_label="", section="教育经历",
+                required=True, options=["硕士研究生", "博士研究生"],
+            ),
+        ],
+    )
+    plan = build_fill_plan(snapshot, scan)
+    assert plan.items == []
+    assert [item.field_id for item in plan.unmatched] == ["degree"]

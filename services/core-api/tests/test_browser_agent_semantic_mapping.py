@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.browser_agent.models import ConfirmedProfileSnapshot, FillPlan, FormFieldDescriptor, FormScan, PlanFieldSummary
-from app.browser_agent.semantic_mapping import apply_semantic_suggestions
+from app.browser_agent.semantic_mapping import apply_semantic_suggestions, flatten_confirmed_snapshot
 
 
 class FakeSemanticProvider:
@@ -31,9 +31,9 @@ def descriptor(field_id: str, label: str, *, input_type: str = "text", options: 
     )
 
 
-def test_ai_semantic_mapping_can_only_reference_confirmed_snapshot_paths_and_requires_confirmation():
+def test_ai_semantic_mapping_only_exposes_schema_and_resolves_values_locally():
     snapshot = ConfirmedProfileSnapshot(
-        scalars={"location.hukou": "安徽", "identity.name": "赵新悦"},
+        scalars={"location.hukou": "安徽", "identity.name": "测试用户"},
         collections={"education": [{"degree": "本科"}]},
     )
     scan = FormScan(
@@ -61,22 +61,18 @@ def test_ai_semantic_mapping_can_only_reference_confirmed_snapshot_paths_and_req
             "source_path": "location.hukou",
             "confidence": 0.91,
             "reason": "生源地通常对应户籍来源地",
-            "selected_option": None,
         },
         {
             "field_id": "degree",
             "source_path": "collections.education[0].degree",
             "confidence": 0.97,
             "reason": "学历层次",
-            "selected_option": "大学本科",
         },
-        # Must be ignored: the model cannot invent a source path/value.
         {
             "field_id": "emergency",
             "source_path": "invented.emergency_contact",
             "confidence": 1.0,
             "reason": "invented",
-            "selected_option": None,
         },
     ])
 
@@ -94,16 +90,42 @@ def test_ai_semantic_mapping_can_only_reference_confirmed_snapshot_paths_and_req
     assert updated.token != "plan-old"
 
     assert provider.seen_candidates == {
-        "identity.name": "赵新悦",
-        "location.hukou": "安徽",
-        "collections.education[0].degree": "本科",
+        "identity.name": {
+            "path": "identity.name",
+            "label": "姓名",
+            "category": "身份信息",
+            "value_type": "string",
+            "multiple": False,
+            "sensitive": False,
+        },
+        "location.hukou": {
+            "path": "location.hukou",
+            "label": "户籍地",
+            "category": "地点信息",
+            "value_type": "string",
+            "multiple": False,
+            "sensitive": False,
+        },
+        "collections.education[0].degree": {
+            "path": "collections.education[0].degree",
+            "label": "education.degree",
+            "category": "collection:education",
+            "value_type": "string",
+            "multiple": False,
+            "sensitive": False,
+            "collection_index": 0,
+        },
     }
+    serialized_candidates = str(provider.seen_candidates)
+    assert "测试用户" not in serialized_candidates
+    assert "安徽" not in serialized_candidates
+    assert "本科" not in serialized_candidates
 
 
-def test_ai_semantic_mapping_rejects_option_not_present_on_page():
+def test_ai_semantic_mapping_rejects_option_when_local_value_cannot_be_normalized():
     snapshot = ConfirmedProfileSnapshot(
         scalars={},
-        collections={"education": [{"degree": "本科"}]},
+        collections={"education": [{"degree": "博士后"}]},
     )
     scan = FormScan(
         url="https://ats.example.com/apply",
@@ -122,7 +144,6 @@ def test_ai_semantic_mapping_rejects_option_not_present_on_page():
             "source_path": "collections.education[0].degree",
             "confidence": 0.99,
             "reason": "学历映射",
-            "selected_option": "博士研究生",
         },
     ])
 
@@ -131,7 +152,7 @@ def test_ai_semantic_mapping_rejects_option_not_present_on_page():
     assert [item.field_id for item in updated.unmatched] == ["degree"]
 
 
-def test_ai_semantic_mapping_treats_custom_combobox_and_radio_group_as_option_controls():
+def test_ai_semantic_mapping_normalizes_custom_combobox_and_radio_group_locally():
     snapshot = ConfirmedProfileSnapshot(
         scalars={"location.hukou": "安徽"},
         collections={"education": [{"degree": "本科"}]},
@@ -159,14 +180,12 @@ def test_ai_semantic_mapping_treats_custom_combobox_and_radio_group_as_option_co
             "source_path": "collections.education[0].degree",
             "confidence": 0.98,
             "reason": "学历映射",
-            "selected_option": "大学本科",
         },
         {
             "field_id": "hukou",
             "source_path": "location.hukou",
             "confidence": 0.99,
             "reason": "户籍映射",
-            "selected_option": "安徽",
         },
     ])
 
@@ -178,17 +197,26 @@ def test_ai_semantic_mapping_treats_custom_combobox_and_radio_group_as_option_co
     assert mapped["hukou"].requires_confirmation is True
 
 
-def test_semantic_provider_candidates_exclude_sensitive_profile_values():
-    from app.browser_agent.semantic_mapping import flatten_confirmed_snapshot
-
+def test_semantic_provider_candidates_include_sensitive_paths_but_not_sensitive_values():
     snapshot = ConfirmedProfileSnapshot(
         scalars={
             "identity.name": "测试用户",
             "identity.id_number": "TESTDOC-ABC1234",
+            "identity.political_status": "测试敏感值",
         },
         collections={},
     )
     candidates = flatten_confirmed_snapshot(snapshot)
-    assert candidates["identity.name"] == "测试用户"
-    assert "identity.id_number" not in candidates
-    assert "TESTDOC-ABC1234" not in str(candidates)
+
+    assert set(candidates) == {
+        "identity.name",
+        "identity.id_number",
+        "identity.political_status",
+    }
+    assert candidates["identity.id_number"]["sensitive"] is True
+    assert candidates["identity.political_status"]["sensitive"] is True
+
+    serialized = str(candidates)
+    assert "测试用户" not in serialized
+    assert "TESTDOC-ABC1234" not in serialized
+    assert "测试敏感值" not in serialized

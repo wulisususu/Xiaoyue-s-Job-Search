@@ -5,6 +5,7 @@ export interface ApplicationRecord {
   job_id: string;
   job_title: string;
   company_name: string;
+  job_status: string;
   status: string;
   channel: string;
   opened_url: string;

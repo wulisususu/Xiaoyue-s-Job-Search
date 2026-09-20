@@ -30,6 +30,8 @@ class EdgeHandle:
     port: int
     profile_dir: Path
     entry_url: str
+    target_id: str = ""
+    websocket_url: str = ""
 
 
 def _pick_free_port() -> int:
@@ -311,6 +313,7 @@ class EdgeBrowserBackend:
         handle = EdgeHandle(process=process, port=port, profile_dir=profile_dir, entry_url=url)
         try:
             self._wait_ready(handle)
+            self._bind_page_target(handle)
         except Exception:
             self.close(handle)
             raise
@@ -338,22 +341,57 @@ class EdgeBrowserBackend:
             response.raise_for_status()
             return response.json()
 
-    def _page_websocket(self, handle: EdgeHandle) -> str:
+    def _page_targets(self, handle: EdgeHandle) -> list[dict[str, Any]]:
         targets = self._json(handle, "/json/list")
         if not isinstance(targets, list):
             raise BrowserControlError("DevTools target list is invalid")
-        pages = [
+        return [
             target for target in targets
             if isinstance(target, dict)
             and target.get("type") == "page"
             and isinstance(target.get("webSocketDebuggerUrl"), str)
             and not str(target.get("url", "")).startswith(("devtools://", "chrome://"))
         ]
+
+    def _bind_page_target(self, handle: EdgeHandle) -> str:
+        """Bind the session to one CDP page target exactly once.
+
+        Login/OAuth/help popups may create extra tabs. They must never silently
+        steal Browser Agent control from the page that this session opened.
+        """
+        pages = self._page_targets(handle)
         if not pages:
             raise BrowserControlError("未找到可控制的招聘页面，请确认受控浏览器窗口仍然打开。")
-        non_blank = [page for page in pages if str(page.get("url", "")) not in {"", "about:blank", "edge://newtab/"}]
-        target = (non_blank or pages)[-1]
-        return str(target["webSocketDebuggerUrl"])
+        exact = [page for page in pages if str(page.get("url", "")) == handle.entry_url]
+        non_blank = [
+            page for page in pages
+            if str(page.get("url", "")) not in {"", "about:blank", "edge://newtab/"}
+        ]
+        target = (exact or non_blank or pages)[-1]
+        target_id = str(target.get("id") or "")
+        websocket_url = str(target.get("webSocketDebuggerUrl") or "")
+        if not target_id or not websocket_url:
+            raise BrowserControlError("招聘页面缺少可绑定的 DevTools target。")
+        handle.target_id = target_id
+        handle.websocket_url = websocket_url
+        return websocket_url
+
+    def _page_websocket(self, handle: EdgeHandle) -> str:
+        if not handle.target_id:
+            return self._bind_page_target(handle)
+
+        for target in self._page_targets(handle):
+            if str(target.get("id") or "") != handle.target_id:
+                continue
+            websocket_url = str(target.get("webSocketDebuggerUrl") or "")
+            if not websocket_url:
+                break
+            handle.websocket_url = websocket_url
+            return websocket_url
+
+        raise BrowserControlError(
+            "原受控招聘页面已关闭或被替换。为避免误操作其他标签页，请重新启动 Browser Agent 会话。"
+        )
 
     def _call_ws(self, ws_url: str, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         command_id = 1
@@ -415,68 +453,130 @@ class EdgeBrowserBackend:
             url=str(payload.get("url", "")),
             title=str(payload.get("title", "")),
             fields=fields,
+            target_id=handle.target_id,
         )
 
-    def fill(self, handle: EdgeHandle, values: dict[str, Any]) -> dict[str, int]:
+    def fill(self, handle: EdgeHandle, values: dict[str, Any]) -> dict[str, Any]:
         encoded = json.dumps(values, ensure_ascii=False)
-        script = f"""
-(async () => {{
-  const updates = {encoded};
+        script = r"""
+(async () => {
+  const updates = __UPDATES__;
   let filled = 0;
   let skipped = 0;
+  const actionStates = {};
   const blocked = new Set(['hidden','password','file','submit','button','reset','image','checkbox']);
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const text = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+  const text = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
   const normalize = (value) => text(value).toLowerCase();
   const isVisible = (el) => Boolean(el && (el.getClientRects().length || el.offsetParent !== null));
-  const labelledText = (el) => {{
+  const nodesFor = (fieldId) => Array.from(document.querySelectorAll('[data-xiaoyue-agent-id]'))
+    .filter((node) => node.dataset.xiaoyueAgentId === fieldId);
+  const controlTypeFor = (el) => (
+    el.dataset.xiaoyueControlType
+    || (el.tagName.toLowerCase() === 'input' ? (el.getAttribute('type') || 'text') : el.tagName.toLowerCase())
+  ).toLowerCase();
+  const labelledText = (el) => {
     if (!el) return '';
     if (el.labels && el.labels.length) return text(Array.from(el.labels).map((x) => x.innerText).join(' '));
     const wrapped = el.closest && el.closest('label');
     return wrapped ? text(wrapped.innerText) : text(el.value);
-  }};
-  const setNativeValue = (el, value) => {{
+  };
+  const setNativeValue = (el, value) => {
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
     if (descriptor && descriptor.set) descriptor.set.call(el, value);
     else el.value = value;
-  }};
-  const dispatchValueEvents = (el) => {{
-    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-  }};
+  };
+  const dispatchValueEvents = (el) => {
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+  };
+  const validationMessage = (el) => {
+    if (!el) return '';
+    const ariaInvalid = el.getAttribute && el.getAttribute('aria-invalid') === 'true';
+    const container = el.closest && el.closest(
+      '.ant-form-item,.el-form-item,.form-item,.form-field,.field,[class*="form-item"],[class*="formItem"]'
+    );
+    const errorNode = container && container.querySelector(
+      '.ant-form-item-explain-error,.el-form-item__error,[role="alert"]'
+    );
+    const message = errorNode && isVisible(errorNode) ? text(errorNode.innerText || errorNode.textContent) : '';
+    return message || (ariaInvalid ? 'aria-invalid' : '');
+  };
+  const readObserved = (nodes, controlType) => {
+    if (!nodes.length) return null;
+    const el = nodes[0];
 
-  for (const [fieldId, rawValue] of Object.entries(updates)) {{
-    const nodes = Array.from(document.querySelectorAll('[data-xiaoyue-agent-id]'))
-      .filter((node) => node.dataset.xiaoyueAgentId === fieldId);
-    if (!nodes.length) {{ skipped += 1; continue; }}
+    if (controlType === 'radio_group') {
+      const checked = nodes.find((node) => node.matches && node.matches('input[type="radio"]:checked'));
+      return checked ? (labelledText(checked) || text(checked.value)) : '';
+    }
+
+    if (controlType === 'combobox') {
+      const root = el.closest('.ant-select,.el-select') || el;
+      const selected = root.querySelector(
+        '.ant-select-selection-item,.el-select__selected-item,.el-select__selection .el-tag'
+      );
+      if (selected && text(selected.innerText || selected.textContent)) {
+        return text(selected.innerText || selected.textContent);
+      }
+      const inner = root.matches('input') ? root : root.querySelector('input,[role="combobox"]');
+      return inner ? text(inner.value) : null;
+    }
+
+    if (controlType === 'date_picker') {
+      const input = el.matches('input') ? el : el.querySelector('input');
+      return input ? text(input.value) : null;
+    }
+
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'select') {
+      const selected = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+      return selected ? text(selected.textContent || selected.value) : text(el.value);
+    }
+    if (tag === 'input' || tag === 'textarea') return text(el.value);
+    return null;
+  };
+
+  for (const [fieldId, rawValue] of Object.entries(updates)) {
+    const nodes = nodesFor(fieldId);
+    const value = Array.isArray(rawValue) ? rawValue.join('；') : String(rawValue ?? '');
+    if (!nodes.length) {
+      actionStates[fieldId] = { status: 'SKIPPED', reason: 'FIELD_NOT_FOUND', requested: value };
+      skipped += 1;
+      continue;
+    }
 
     const el = nodes[0];
-    const controlType = (
-      el.dataset.xiaoyueControlType
-      || (el.tagName.toLowerCase() === 'input' ? (el.getAttribute('type') || 'text') : el.tagName.toLowerCase())
-    ).toLowerCase();
-    const value = Array.isArray(rawValue) ? rawValue.join('；') : String(rawValue ?? '');
+    const controlType = controlTypeFor(el);
+    if (blocked.has(controlType)) {
+      actionStates[fieldId] = { status: 'SKIPPED', reason: 'CONTROL_BLOCKED', requested: value };
+      skipped += 1;
+      continue;
+    }
 
-    if (blocked.has(controlType)) {{ skipped += 1; continue; }}
-
-    if (controlType === 'radio_group') {{
+    if (controlType === 'radio_group') {
       const radios = nodes.filter((node) => node.matches && node.matches('input[type="radio"]'));
       const normalized = normalize(value);
       const target = radios.find((radio) =>
         normalize(radio.value) === normalized || normalize(labelledText(radio)) === normalized
       );
-      if (!target || target.disabled) {{ skipped += 1; continue; }}
+      if (!target || target.disabled) {
+        actionStates[fieldId] = { status: 'SKIPPED', reason: 'OPTION_NOT_FOUND', requested: value };
+        skipped += 1;
+        continue;
+      }
       const clickable = target.closest('label,.ant-radio-wrapper,.el-radio') || target;
       clickable.click();
-      target.dispatchEvent(new Event('input', {{ bubbles: true }}));
-      target.dispatchEvent(new Event('change', {{ bubbles: true }}));
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+      actionStates[fieldId] = { status: 'ATTEMPTED', requested: value };
       filled += 1;
       continue;
-    }}
+    }
 
-    if (controlType === 'combobox') {{
+    if (controlType === 'combobox') {
       const root = el.closest('.ant-select,.el-select') || el;
       const inner = root.matches('input') ? root : root.querySelector('input,[role="combobox"]');
       if (
@@ -484,12 +584,13 @@ class EdgeBrowserBackend:
         || root.getAttribute('aria-disabled') === 'true'
         || root.classList.contains('ant-select-disabled')
         || root.classList.contains('is-disabled')
-      ) {{
+      ) {
+        actionStates[fieldId] = { status: 'SKIPPED', reason: 'CONTROL_DISABLED', requested: value };
         skipped += 1;
         continue;
-      }}
+      }
       const trigger = root.querySelector('.ant-select-selector,.el-select__wrapper,[role="combobox"],input') || root;
-      trigger.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+      trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
       trigger.click();
       await sleep(120);
 
@@ -506,58 +607,178 @@ class EdgeBrowserBackend:
         normalize(candidate.innerText || candidate.textContent) === normalized
         || normalize(candidate.getAttribute('data-value')) === normalized
       );
-      if (!option) {{ skipped += 1; continue; }}
-      option.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+      if (!option) {
+        actionStates[fieldId] = { status: 'SKIPPED', reason: 'OPTION_NOT_FOUND', requested: value };
+        skipped += 1;
+        continue;
+      }
+      option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
       option.click();
+      actionStates[fieldId] = { status: 'ATTEMPTED', requested: value };
       filled += 1;
       continue;
-    }}
+    }
 
-    if (controlType === 'date_picker') {{
+    if (controlType === 'date_picker') {
       const input = el.matches('input') ? el : el.querySelector('input');
-      if (!input || input.disabled) {{ skipped += 1; continue; }}
+      if (!input || input.disabled) {
+        actionStates[fieldId] = { status: 'SKIPPED', reason: 'CONTROL_DISABLED', requested: value };
+        skipped += 1;
+        continue;
+      }
       input.focus();
       input.click();
       setNativeValue(input, value);
-      input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-      input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-      input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
-      input.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
       input.blur();
+      actionStates[fieldId] = { status: 'ATTEMPTED', requested: value };
       filled += 1;
       continue;
-    }}
+    }
 
-    if (el.disabled || el.readOnly) {{ skipped += 1; continue; }}
+    if (el.disabled || el.readOnly) {
+      actionStates[fieldId] = { status: 'SKIPPED', reason: 'CONTROL_DISABLED', requested: value };
+      skipped += 1;
+      continue;
+    }
     const tag = el.tagName.toLowerCase();
-    if (tag === 'select') {{
+    if (tag === 'select') {
       const normalized = normalize(value);
       const option = Array.from(el.options || []).find((item) =>
         normalize(item.value) === normalized || normalize(item.textContent) === normalized
       );
-      if (!option) {{ skipped += 1; continue; }}
+      if (!option) {
+        actionStates[fieldId] = { status: 'SKIPPED', reason: 'OPTION_NOT_FOUND', requested: value };
+        skipped += 1;
+        continue;
+      }
       el.value = option.value;
       dispatchValueEvents(el);
+      actionStates[fieldId] = { status: 'ATTEMPTED', requested: value };
       filled += 1;
       continue;
-    }}
-    if (tag === 'input' || tag === 'textarea') {{
+    }
+    if (tag === 'input' || tag === 'textarea') {
       setNativeValue(el, value);
       dispatchValueEvents(el);
+      actionStates[fieldId] = { status: 'ATTEMPTED', requested: value };
       filled += 1;
       continue;
-    }}
+    }
+    actionStates[fieldId] = { status: 'SKIPPED', reason: 'UNSUPPORTED_CONTROL', requested: value };
     skipped += 1;
-  }}
-  return {{ filled_count: filled, skipped_count: skipped }};
-}})()
-"""
+  }
+
+  // Give React/Vue/ATS validation handlers a chance to reconcile or reject the
+  // value before deciding whether the fill really succeeded.
+  await sleep(180);
+
+  const results = [];
+  let verified = 0;
+  let failed = 0;
+  let uncertain = 0;
+  for (const [fieldId, rawValue] of Object.entries(updates)) {
+    const requested = Array.isArray(rawValue) ? rawValue.join('；') : String(rawValue ?? '');
+    const action = actionStates[fieldId];
+    if (!action || action.status === 'SKIPPED') {
+      results.push({
+        field_id: fieldId,
+        requested,
+        observed: null,
+        status: 'SKIPPED',
+        reason: action ? action.reason : 'NOT_ATTEMPTED',
+      });
+      continue;
+    }
+
+    const nodes = nodesFor(fieldId);
+    if (!nodes.length) {
+      failed += 1;
+      results.push({
+        field_id: fieldId,
+        requested,
+        observed: null,
+        status: 'FAILED',
+        reason: 'FIELD_DISAPPEARED',
+      });
+      continue;
+    }
+
+    const el = nodes[0];
+    const controlType = controlTypeFor(el);
+    const observed = readObserved(nodes, controlType);
+    const error = validationMessage(el);
+    if (error) {
+      failed += 1;
+      results.push({
+        field_id: fieldId,
+        requested,
+        observed,
+        status: 'FAILED',
+        reason: 'PAGE_VALIDATION_ERROR',
+      });
+      continue;
+    }
+
+    if (observed === null) {
+      uncertain += 1;
+      results.push({
+        field_id: fieldId,
+        requested,
+        observed: null,
+        status: 'UNCERTAIN',
+        reason: 'READBACK_UNAVAILABLE',
+      });
+      continue;
+    }
+
+    if (normalize(observed) === normalize(requested)) {
+      verified += 1;
+      results.push({
+        field_id: fieldId,
+        requested,
+        observed,
+        status: 'VERIFIED',
+        reason: 'READBACK_MATCH',
+      });
+    } else {
+      failed += 1;
+      results.push({
+        field_id: fieldId,
+        requested,
+        observed,
+        status: 'FAILED',
+        reason: observed ? 'VALUE_MISMATCH' : 'VALUE_REVERTED',
+      });
+    }
+  }
+
+  return {
+    filled_count: filled,
+    skipped_count: skipped,
+    verified_count: verified,
+    failed_count: failed,
+    uncertain_count: uncertain,
+    results,
+  };
+})()
+""".replace("__UPDATES__", encoded)
         payload = self._evaluate(handle, script)
         if not isinstance(payload, dict):
             raise BrowserControlError("页面填写结果无效")
+
+        raw_results = payload.get("results")
+        results = raw_results if isinstance(raw_results, list) else []
         return {
             "filled_count": int(payload.get("filled_count", 0)),
             "skipped_count": int(payload.get("skipped_count", 0)),
+            "verified_count": int(payload.get("verified_count", 0)),
+            "failed_count": int(payload.get("failed_count", 0)),
+            "uncertain_count": int(payload.get("uncertain_count", 0)),
+            "results": [item for item in results if isinstance(item, dict)],
         }
 
     def close(self, handle: EdgeHandle) -> None:

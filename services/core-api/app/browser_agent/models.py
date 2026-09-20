@@ -31,6 +31,7 @@ class FormScan:
     url: str
     title: str
     fields: list[FormFieldDescriptor]
+    target_id: str = ""
 
 
 @dataclass(slots=True)
@@ -57,6 +58,7 @@ class FillPlan:
     token: str
     session_id: str
     page_url: str
+    page_revision: str = ""
     items: list[FillPlanItem] = field(default_factory=list)
     unmatched: list[PlanFieldSummary] = field(default_factory=list)
     blocked: list[PlanFieldSummary] = field(default_factory=list)
@@ -69,3 +71,4 @@ class BrowserAgentSessionInfo:
     url: str
     status: str
     browser: str
+    mode: str = "fill"
