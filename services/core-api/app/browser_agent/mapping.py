@@ -7,6 +7,7 @@ from typing import Any
 
 from ..profile.registry import get_field_definition
 from .models import (
+    AttachmentPlanItem,
     ConfirmedProfileSnapshot,
     FillPlan,
     FillPlanItem,
@@ -276,6 +277,21 @@ def build_fill_plan(
 
     for field in scan.fields:
         input_type = (field.input_type or field.tag or "text").lower()
+
+        if input_type == "file":
+            if not field.disabled and field.adapter_action == "resume_upload":
+                plan.attachments.append(
+                    AttachmentPlanItem(
+                        field_id=field.field_id,
+                        label=field.label or field.aria_label or field.name or "简历",
+                        kind="resume",
+                        required=field.required,
+                    )
+                )
+            else:
+                plan.blocked.append(_summary(field))
+            continue
+
         if field.disabled or field.readonly or input_type in _BLOCKED_TYPES:
             plan.blocked.append(_summary(field))
             continue
