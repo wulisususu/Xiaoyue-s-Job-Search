@@ -1,15 +1,249 @@
 # Xiaoyue's Job Search
 
-央国企岗位雷达、个人求职知识库、简历版本库、AI 网申 Agent 与投递 CRM 的本地优先桌面工作台。
+面向央国企/校招求职的本地优先 Windows 桌面工作台。
 
-## V1 技术栈
+它把岗位发现、招聘入口验证、个人资料 SSOT、不可变简历版本、AI 提取、Browser Agent 和投递 CRM 放在同一条可审计链路里，而不是把“抓岗位”“自动填表”“投递记录”做成彼此独立的脚本。
+
+## 当前能力
+
+### Job Radar
+
+```text
+WorkFind ──> Company Registry ─┐
+                               ├─> Company Resolver ─> Canonical Jobs ─> Core API ─> Job Radar
+Tencent / Xiaozhao Feed ───────┘                    └─> Job Sources / Provenance
+```
+
+已支持：
+
+- WorkFind 企业、央企/地方国企身份与央企关系导入/同步；
+- 腾讯 SmartSheet / Xiaozhao 招聘 Feed；
+- Canonical Company / Job / Source 数据模型；
+- 公司名称与别名解析；
+- URL + fingerprint 岗位去重；
+- server-side pagination 与岗位统计；
+- Source Sync Run、不可变 WorkFind snapshot、Last Known Good；
+- 腾讯 Feed 完整性 quarantine，异常骤减不会批量把岗位误标 stale；
+- canonical Job 字段区分“上游缺失”和“上游明确清空”，避免 deadline/location 等旧值永久残留。
+
+### Career URL Verification
+
+招聘 URL 不因“存在一个链接”就被当成可申请。
+
+当前流程：
+
+```text
+DISCOVERED_URL_UNVERIFIED
+        │
+        ├─ static verifier confirms apply page ───────────────┐
+        │                                                     ↓
+        └─ SPA / login / WAF / browser-required ─> Browser Verify
+                                                              ↓
+                                                        VERIFIED_OPEN
+```
+
+验证层包含：
+
+- 只允许 http/https；
+- DNS resolve-once + 全地址校验；
+- 非公网/private/loopback/link-local/reserved/metadata 地址拒绝；
+- pinned-IP 连接，保留原 Host / TLS SNI / 证书校验；
+- redirect 每跳重新校验；
+- bounded response reads；
+- ATS 线索识别；
+- URL observation、redirect chain、证据、fingerprint 留档；
+- Rediscovery Candidate 必须先验证，不能直接覆盖 canonical URL；
+- Browser Verify 模式只读页面，不允许填写/上传/提交。
+
+## Profile SSOT + Immutable Resume Vault
+
+Resume 是导入来源，不是运行时真相；Browser Agent 只读取人工确认后的 Profile SSOT。
+
+```text
+PDF / DOCX
+    ↓
+Immutable Resume Vault
+    ↓
+text extraction
+    ↓
+AI / deterministic extraction
+    ↓
+PENDING Drafts
+    ↓ human accept / reject
+Confirmed Profile SSOT
+    ↓
+ATS Mapping / Browser Agent
+```
+
+当前支持：
+
+- PDF / DOCX；单文件最大 50 MiB；
+- 流式上传、incremental SHA-256；
+- 内容寻址不可变版本；
+- PDF signature/open 校验；
+- DOCX ZIP member / expanded-size / compression-ratio / required-member / CRC 校验；
+- PDF 文本层与 DOCX 段落/表格提取；
+- 无可用文本层的 PDF 标记为 `OCR_REQUIRED`，不伪造 OCR 结果；
+- scalar Profile + Education / Experience / Project / Award / Certificate / Language / Skill collections；
+- Draft accept/reject；
+- append-only Profile revision history；
+- sensitive Profile 值使用系统凭据存储引用，不把明文敏感值落普通 SQLite API 输出。
+
+## Unified AI Provider / Extraction
+
+AI Provider 使用统一 OpenAI-compatible 配置层。
+
+已支持：
+
+- Provider preset + custom Base URL / model；
+- API Key 保存、轮换、删除；
+- API Key 存系统 credential store，不回显明文；
+- 远程 Provider 强制 HTTPS；
+- HTTP 只允许 localhost / loopback 本机服务；
+- Provider connectivity test；
+- `AIExtractionRun` audit；
+- prompt/schema/provider/model/input hash 持久化；
+- Draft 幂等；
+- input/output bounds、timeout、HTTP/network/bad-JSON 错误分类；
+- 部分非法 AI 候选可以单项丢弃，不让整个合法结果一起失败。
+
+正式链路：
+
+```text
+Resume → AIExtractionRun → validated PENDING Drafts → Review → Profile SSOT
+```
+
+## Browser Agent
+
+Browser Agent 不是“自动提交机器人”。它的职责是识别页面、生成可解释 Fill Plan、等待用户确认、写入并验证结果；最终提交始终由用户本人完成。
+
+### 安全边界
+
+- `verify` 与 `fill` 两种模式分离；
+- 未静态验证的 SPA/login/WAF 页面可以进入只读 Browser Verify；
+- Fill 模式只允许 `VERIFIED_OPEN` Job；
+- Browser session 绑定固定 CDP target，不静默切到新弹窗/新 tab；
+- Fill Plan 绑定 page revision；页面/步骤变化后旧 plan 失效；
+- AI semantic mapping 只看到字段 schema/path，不发送 Profile 实际值；
+- Profile 实际值由 Core 本地解析；
+- 高风险/需确认字段不默认自动勾选；
+- password / submit / arbitrary file 等控件阻断；
+- 填写后重新读取 DOM 值并输出 `VERIFIED / FAILED / UNCERTAIN`；
+- 没有任何代码路径自动点击最终提交。
+
+### ATS Adapter
+
+Browser Agent 有独立 adapter registry，并复用 verifier 的 ATS 身份识别。
+
+当前支持程度：
+
+| ATS | 当前实现 |
+| --- | --- |
+| Moka | `moka_dom_v1` 专项 adapter |
+| 北森 | `generic_dom` |
+| 飞书招聘 | `generic_dom` |
+| Hotjob | `generic_dom` |
+| 其他站点 | generic fallback |
+
+Moka v1 已支持：
+
+- `basicInfo` 原生字段路径；
+- indexed education / experience / project / language / award 映射；
+- React / Ant Design 风格 DOM id 路径；
+- 重复经历按原生 index 精确绑定，不依赖 DOM 出现顺序；
+- 显式 Resume Vault 版本选择；
+- 只允许识别为 Moka 原生 `resume` 的 file input；
+- `DOM.setFileInputFiles` 后从浏览器 FileList 回读文件名；
+- 上传成功后把实际 ResumeVersion 写回 Application CRM；
+- `RESUME_LINKED` 不可变事件；
+- session 结束清理 staging 文件。
+
+Moka v1 当前仍需人工处理：
+
+- 其他附件；
+- 级联选择器；
+- 没有原生 path 的重复区块；
+- `practiceInfo` 的实习/工作归类；
+- Moka custom fields；
+- iframe 表单；
+- 多步骤自动导航；
+- 最终提交。
+
+## Application CRM
+
+手动申请和 Browser Agent 共用同一 `ApplicationSession` SSOT。
+
+当前支持：
+
+- `OPENED / IN_PROGRESS / SUBMITTED / INTERVIEWING / OFFER / REJECTED / ABANDONED`；
+- 后端合法状态机，非法倒退返回冲突；
+- 活跃 attempt 去重；
+- `resume_version_id`；
+- immutable `ApplicationEvent` timeline；
+- Browser Agent 开始填写会产生状态事件；
+- Browser Agent 简历上传成功会绑定实际 ResumeVersion 并产生 `RESUME_LINKED`；
+- 桌面端只展示后端允许的下一状态；
+- 时间线按需读取。
+
+## Dashboard
+
+Dashboard 已使用 Core 实时聚合，不再显示硬编码 0。
+
+当前 KPI：
+
+- 今日新增岗位；
+- 可申请岗位；
+- 央企岗位；
+- 岗位总数；
+- 填写中；
+- 已投递；
+- 面试中；
+- Offer。
+
+空状态也基于真实数据决定下一步动作。
+
+## 本地安全模型
+
+### Local Core API
+
+Tauri 每次启动使用 OS CSPRNG 生成一次性 session token：
+
+- token 只存在于 shell / Core 进程内存和 Authorization header；
+- 不写 SQLite、配置文件或普通日志；
+- `/api/*`（health 除外）统一 Bearer 校验；
+- Host / Origin 限制为本机信任边界；
+- 前端 Core client 统一经动态 runtime endpoint + auth headers。
+
+### External URL
+
+招聘 URL verifier 的 SSRF / DNS rebinding 防线与本地 Provider 访问是两套独立策略，不互相豁免。
+
+## Windows 发布
+
+技术栈：
 
 - Node.js 20+
 - Python 3.11+
 - Rust stable
-- Microsoft Edge WebView2 Runtime
 - Tauri 2 + React + TypeScript
 - FastAPI + SQLAlchemy + SQLite
+- Microsoft Edge WebView2 Runtime
+
+Core 通过 PyInstaller onedir 打包，并作为 Tauri NSIS resource 安装。
+
+CI 当前执行：
+
+- Web tests；
+- Core tests；
+- Alembic migration tests；
+- Web production build；
+- PyInstaller Core sidecar build；
+- sidecar health/auth/migration smoke；
+- `cargo check`；
+- `cargo clippy -- -D warnings`；
+- `cargo test`；
+- 完整 `tauri build`；
+- 上传生成的 Windows NSIS installer artifact（14 天 retention）。
 
 ## 本地开发（Windows PowerShell）
 
@@ -22,207 +256,46 @@ npm install
 .\scripts\dev.ps1
 ```
 
-默认本地数据目录为 `~/.xiaoyue-job-search`（Windows 上即 `C:\Users\<user>\.xiaoyue-job-search`）。可通过环境变量 `XIAOYUE_DATA_DIR` 覆盖。
+默认本地数据目录：
+
+```text
+~/.xiaoyue-job-search
+```
+
+Windows 通常为：
+
+```text
+C:\Users\<user>\.xiaoyue-job-search
+```
+
+可通过 `XIAOYUE_DATA_DIR` 覆盖。
 
 ## 上游参考源码
 
-项目预留 `third_party/upstreams/` 作为专属上游参考区。完整源码快照放在 `third_party/upstreams/_local/`，默认不提交 Git；仓库只跟踪来源、SHA256、许可证说明和借鉴指南。
+`third_party/upstreams/` 只保存来源、hash、许可证说明与采用边界；本地完整快照放在被 Git 忽略的 `third_party/upstreams/_local/`。
 
-当前参考上游：
+参考项目：
 
-- WorkFind：央国企企业主库、集团关系、招聘来源与校招日历；
-- Xiaozhao Radar：招聘事件流和岗位 Feed；
-- Offer Harvester：Playwright Browser Agent、表单填写/上传、人工确认和投递追踪。
+- WorkFind；
+- Xiaozhao Radar；
+- Offer Harvester。
 
-重新导入本地 ZIP 快照可使用 `scripts/import_upstreams.py`，详细边界见 `third_party/upstreams/ADOPTION_GUIDE.md`。
+详细审计见：
 
-## Job Radar Core
+- `third_party/upstreams/UPSTREAM_AUDIT.md`
+- `third_party/upstreams/ADOPTION_GUIDE.md`
 
-岗位雷达已经接入自己的标准数据层，而不是直接把上游文件当成最终事实。
+## 下一阶段
 
-数据链路：
+当前核心数据层、Browser Agent 安全基础、Application CRM、Moka v1 与 Windows 发布链已经形成闭环。
 
-```text
-WorkFind ──> Company Registry ─┐
-                               ├─> Company Resolver ─> Canonical Jobs ─> Core API ─> 岗位雷达 UI
-Xiaozhao ─> Recruitment Feed ──┘                    └─> Job Sources / Provenance
-```
+下一阶段优先级：
 
-当前支持：
+1. 北森 → 飞书招聘 → Hotjob 专项 adapter；
+2. Moka 级联选择、重复区块与多步骤能力；
+3. 更细的笔试/一面/二面/HR 面事件与 follow-up；
+4. Playwright/真实 ATS E2E fixtures；
+5. dependency audit、branch protection、OpenAPI generated types；
+6. 真人 Windows GUI smoke 与 Release 故障排查文档。
 
-- WorkFind 企业、央企/地方国企身份和央企关系导入；
-- Xiaozhao Radar Feed 导入；
-- 公司名称/别名解析；
-- URL + fingerprint 岗位去重；
-- 上游原始数据来源留档；
-- `/api/jobs` 查询与筛选；
-- `/api/jobs/stats` 雷达统计；
-- 桌面端岗位卡片、企业性质、入口状态和基础筛选。
-
-### 导入本地上游数据
-
-先使用 `scripts/import_upstreams.py` 将三个 ZIP 恢复到 `_local/`，然后执行：
-
-```powershell
-python .\scripts\import_job_sources.py `
-  --workfind-db .\third_party\upstreams\_local\workfind\国企数据库.db `
-  --workfind-relations .\third_party\upstreams\_local\workfind\央企二级子公司.json `
-  --xiaozhao-jobs .\third_party\upstreams\_local\xiaozhao-radar\jobs.json `
-  --data-dir .\local-data\job-radar
-```
-
-用户提供快照的基线导入结果：
-
-- WorkFind：2271 个企业 Source、111 条可明确建立的央企关系；
-- Xiaozhao：1598 条 source rows 去重为 1486 个 canonical jobs；
-- 其中 1125 个岗位有 URL 但初始仍是“入口待验证”；
-- 361 个 canonical jobs 初始没有 URL。
-
-**有 URL 不等于岗位已验证开放。** 上游 URL 首先保持 `DISCOVERED_URL_UNVERIFIED`，只有验证器确认页面存在明确可申请入口后才升级为 `VERIFIED_OPEN` 并启用“开始申请”。完整状态和数据结构见 `doc/JOB_RADAR_DATA_MODEL.md`。
-
-## Online Source & Career Verification Engine
-
-岗位发现数据现在有独立的在线更新与真实性验证层，避免长期依赖某个静态 `jobs.json` 或已经过期的招聘地址。
-
-当前支持：
-
-- 直接读取腾讯 SmartSheet 公开数据，而不是把 Xiaozhao 仓库中的静态 JSON 当作长期运行时数据源；
-- WorkFind 结构化数据在线同步；
-- Source Sync Run 记录和 Last Known Good Snapshot；
-- 腾讯文档 6 小时、WorkFind 24 小时的到期同步策略；同步失败 1 小时后可重试；
-- 岗位入口只读 URL 验证、重定向解析和页面类型分类；
-- Moka、北森、Hotjob、飞书招聘、51job、国聘、SuccessFactors 等 ATS 线索识别；
-- 原始 URL、最终 URL、redirect chain、验证时间和页面证据留档；
-- 失效入口只生成 Rediscovery Candidate，不未经验证覆盖 canonical URL；
-- 只有 `VERIFIED_APPLY -> VERIFIED_OPEN` 才解锁未来 Browser Agent 的申请入口。
-
-## Profile SSOT + Immutable Resume Vault（Phase 3A）
-
-候选人信息已经从“简历文件”与“可信在线资料”两层分开：
-
-```text
-PDF / DOCX
-    ↓
-Immutable Resume Vault
-    ↓
-文本层解析
-    ↓
-Extraction Drafts（未确认）
-    ↓ 人工接受 / 拒绝
-Profile SSOT（confirmed=true）
-    ↓
-未来 ATS Mapping / Browser Agent
-```
-
-核心原则：**Resume 是导入来源，不是运行时真相；只有人工确认过的 Profile SSOT 才允许未来自动填表使用。**
-
-当前支持：
-
-- 桌面端导入 `.pdf` / `.docx` 简历；
-- 单文件最大 50 MiB；旧 `.doc` 明确拒绝；
-- SHA-256 内容寻址和不可变 Resume Version；相同字节重复上传不会生成新版本；
-- Vault 路径：`<XIAOYUE_DATA_DIR>/vault/resumes/<sha256>/original.<ext>`；API 不暴露本机 Vault 绝对路径；
-- PDF 文本层优先提取、DOCX 段落/表格文本提取；
-- 无可用文本层的 PDF 标记为 `OCR_REQUIRED`，Phase 3A 不伪造 OCR 结果；
-- 当前 deterministic extractor 仅保守识别严格邮箱和中国大陆手机号；
-- 简历解析结果只能形成 `PENDING` Draft，导入不会直接修改 Profile；
-- Draft 可以显式接受或拒绝；接受后写入 confirmed Profile，拒绝不改变 Profile；
-- Profile 支持手动创建/编辑；
-- 每次 Profile 变化都追加 `profile_field_revisions`，保留来源、旧值、新值、置信度和时间；
-- Core API 暴露服务端唯一 Field Registry，桌面端不复制一套字段定义；
-- “简历库”页面展示版本、hash 前缀、文件大小、解析状态、待审核数和 OCR 状态；
-- “我的资料”页面展示全部 Registry 字段、已确认来源以及待审核 Draft。
-
-Phase 3A 明确**没有**引入网络 AI、OCR 引擎、Browser Agent、API Key 或 Credential Store。
-
-详细设计：`docs/superpowers/specs/2026-09-16-profile-resume-vault-design.md`
-
-实施计划：`docs/superpowers/plans/2026-09-16-profile-resume-vault.md`
-
-## 当前里程碑
-
-### MVP Foundation
-
-- [x] Local API 提供 `/api/health`
-- [x] SQLite 数据库写入 `XIAOYUE_DATA_DIR`
-- [x] Local Vault 根目录自动创建
-- [x] 桌面 UI 定义六个一级入口：首页、岗位雷达、投递中心、我的资料、简历库、设置
-- [x] UI 接入本地 Core 健康状态
-- [x] Core pytest 基线已建立
-- [x] Web 测试通过（GitHub Actions Windows Runner）
-- [x] Frontend production build 通过（GitHub Actions Windows Runner）
-- [x] Tauri Cargo metadata 通过（GitHub Actions Windows Runner）
-
-### Job Radar Core
-
-- [x] Canonical Company / Job / Source 数据模型
-- [x] WorkFind Importer
-- [x] Xiaozhao Importer
-- [x] Company Resolver
-- [x] Job Deduper
-- [x] Job Radar API
-- [x] 第一版岗位雷达 UI
-- [x] 聚合 URL 默认保持“待验证”，不误标为可申请
-
-### Online Source & Career Verification Engine
-
-- [x] 腾讯 SmartSheet 在线同步
-- [x] WorkFind 在线同步
-- [x] Last Known Good Snapshot / Sync Run 历史
-- [x] Apply URL Verifier
-- [x] ATS Detector
-- [x] URL 健康状态与验证证据
-- [x] Rediscovery Candidate 安全门
-- [x] 到期自动同步策略
-- [ ] Browser Agent 与“开始申请”联动
-
-### Profile SSOT + Resume Vault — Phase 3A
-
-- [x] Canonical Profile Field Registry
-- [x] Immutable Resume Vault
-- [x] SHA-256 去重与不可变版本号
-- [x] PDF / DOCX 文本解析
-- [x] `OCR_REQUIRED` 状态
-- [x] Conservative deterministic Draft extraction
-- [x] Draft 接受 / 拒绝事务
-- [x] 手动 Profile 编辑
-- [x] Append-only Profile revision history
-- [x] Resume / Profile Core API
-- [x] 简历库 UI
-- [x] Profile SSOT / Draft Review UI
-- [x] Windows CI 覆盖 Web / Core / Build / Tauri metadata
-
-### Unified AI Extraction Contract — Phase 3C
-
-- [x] 唯一 `ProfileExtractionProvider` 契约：`metadata()` + `extract() → ProfileExtractionBundle`（scalar 候选 + structured collection 候选 + provider/model/prompt/schema 元数据）
-- [x] `AIExtractionRun` 持久化（`0009_ai_extraction_runs` migration）：provider / model / prompt_version / schema_version / status / input_hash / error；失败也落 FAILED run
-- [x] Draft 幂等：`extraction_run_id` + `candidate_fingerprint` partial unique index，同一 run 重放不产生重复候选
-- [x] `POST / GET /api/ai/extraction-runs` 正式链路入口；deterministic 导入走同一 orchestration
-- [x] Provider 边界：输入/输出长度上限、timeout、bad JSON / 空响应 / 网络 / HTTP 错误分类、部分非法候选单项丢弃
-- [x] 删除 `ProfileExtractor + provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨实现
-
-### 本地安全模型（两套互不重叠的策略）
-
-1. **本机 API 信任边界（session token）**：token 由 Tauri shell 每次启动用 OS CSPRNG 生成（BCryptGenRandom，256-bit hex），只存在于两侧进程内存与 `Authorization: Bearer` 头中，绝不落入 SQLite、日志或磁盘；`/api/*`（health 除外）强制校验 Bearer + loopback Host/Origin。新增任何 router（包括未来的 Browser Agent 高权限路由）天然被 middleware 覆盖——存在回归测试逐路由断言。前端所有 Core client 统一经 `coreRuntime()` + `authHeaders()` wrapper。
-2. **招聘 URL verifier SSRF guard**：core 主动出网抓取/验证招聘 URL 时走 pinned-IP 校验（resolve-once、逐地址校验、redirect 每跳重新 pin）。它与「本地 AI Provider 访问 localhost 出网」是两套独立安全策略，互不豁免。
-
-### Sidecar 发布闭环（PyInstaller onedir + NSIS）
-
-- [x] `scripts/build-core.ps1`：PyInstaller onedir 打包 `xiaoyue-core-api.exe`（入口直接 import app 对象；alembic scripts 以 datas 内嵌，`_core_root()` 在 frozen 模式走 `sys._MEIPASS`）
-- [x] `scripts/smoke-core-exe.ps1`：fresh 数据目录 → migration head → health 200 → 无 token 401 / 正确 token 200（本地与 CI 均执行）
-- [x] tauri bundle：`active=true`、targets=NSIS（Windows 主渠道）、resources 把 onedir 产物放进 `<install>/core-api/`（`find_core_bin` 原生寻址；不用 externalBin，因为 onedir 是目录而 externalBin 要单文件）
-- [x] CSP `connect-src http://127.0.0.1:*` 适配动态端口
-- [x] sidecar stdout/stderr → `<data>/logs/core-<millis>-<pid>.{out,err}.log`（保留最新 20 个）
-- [x] 启动失败可诊断：Rust `SidecarLaunch` 三态（Launched / NotBundled=dev / Failed+原因），UI 出示横幅 + 日志位置
-- [x] 安装级 smoke（本地 Windows 实测）：NSIS installer 静默安装 → 布局校验 → 安装版 sidecar health/auth/迁移 → 静默卸载；`tauri build` 产出 `小悦求职_0.1.0_x64-setup.exe`（Tauri 首次会自行下载 NSIS 工具链，需网络可达 github.com）
-- [ ] 真人 GUI smoke（真实桌面环境人工确认 UI 主链）
-
-## 当前状态与下一阶段
-
-Phase 3C、session token 硬化、sidecar NSIS 发布闭环均已落地。剩余工作见 `doc/TODO.md`，重点包括：
-
-1. 真人 GUI smoke（真实桌面安装 NSIS installer 后人工过一遍主链）；
-2. Application CRM Phase 2、Dashboard 真实数据与设置页；
-3. Browser Agent：Job → Verify → Start Application → ApplicationSession → ATS Mapping → Human Confirm → Submit。
-
-Browser Agent 自动填表继续在 Profile/Provider 数据底座稳定后接入。
+详细未完成事项见 `doc/TODO.md`。

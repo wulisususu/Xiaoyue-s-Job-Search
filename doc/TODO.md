@@ -1,256 +1,303 @@
 # 未完成事项清单与路线图
 
-> 更新时间：2026-09-17
-> 功能基线：`main@793f8545a354ad709fe18b00c4f19f526a7ddd79`
-> 原则：本文件只保留**当前仍需完成或继续加固**的工作；已经落地并通过 CI 的事项集中放在文末，避免重复开发。
+> 更新时间：2026-09-21
+>
+> 本文件只保留当前仍需完成或继续加固的事项。已经进入当前功能基线并通过对应 CI/回归测试的能力集中列在文末，不再重复作为 TODO。
 
 ---
 
-## P0：Browser Agent 前必须完成的架构基础
+## P0：真实发布验证
 
-### 1. Tauri sidecar 发布闭环
+### 1. Windows 真人 GUI smoke
 
-**Status**：IN PROGRESS  
-**Priority**：P0  
-**Depends on**：CI Green  
-**Blocks**：Release、真实用户安装
+**Status**：TODO
 
-**已完成**：
+自动化已经覆盖 NSIS build、installer artifact、PyInstaller sidecar、fresh DB migration、health/auth smoke 和完整 Tauri link。仍需在真实 Windows 桌面人工确认最终交互体验。
 
-- [x] Rust 端可寻找并启动 Core sidecar。
-- [x] 随机可用 loopback 端口。
-- [x] Tauri command 动态暴露 Core endpoint / session token。
-- [x] 应用退出时关闭 sidecar。
-- [x] 前端 Profile / Jobs / Resumes 等主链已具备动态 Core endpoint/auth 基础。
-- [x] `Cargo.lock` 已提交。
-- [x] CI 已实际执行完整 `tauri build`，Rust compile/link 可通过。
-- [x] PyInstaller `onedir` 打包 `xiaoyue-core-api.exe`；alembic scripts 以 datas 内嵌（`_core_root()` 兼容 frozen 模式）。
-- [x] 打包 exe 烟测（本地与 CI）：fresh 数据目录 → alembic head → health 200 → 无 token 401 / 正确 token 200。
-- [x] Tauri resources 绑定 Core 可执行文件（`<install>/core-api/xiaoyue-core-api.exe`，`find_core_bin` 原生寻址）。
-- [x] `bundle.active = true`，targets = NSIS（选定为 Windows 主渠道）。
-- [x] CSP 允许 `http://127.0.0.1:*`（sidecar 动态端口）。
-- [x] sidecar stdout/stderr 写入 `<data>/logs/core-<millis>-<pid>.{out,err}.log`，只保留最新 20 个。
-- [x] Core 启动失败时 UI 出示可诊断横幅（失败原因 + 日志位置）；dev 无打包保持静默。
+- [ ] 从 CI artifact 安装 NSIS installer。
+- [ ] 首次启动确认 sidecar 正常拉起。
+- [ ] Job Radar 同步/浏览/验证入口。
+- [ ] Resume Vault 导入。
+- [ ] Draft Review → Profile SSOT。
+- [ ] Browser Verify → Fill Plan → 回读验证。
+- [ ] Moka ResumeVersion 显式上传。
+- [ ] CRM 时间线和 resume linkage。
+- [ ] 退出后确认不残留 Core 子进程。
+- [ ] 卸载后确认程序目录清理。
 
-**仍需完成**：
-
-- [x] NSIS installer 构建与安装级 smoke（本地 Windows 实测）：`小悦求职_0.1.0_x64-setup.exe`（24.6MB）静默安装 → 布局 `xiaoyue-job-search.exe` + `core-api/xiaoyue-core-api.exe` + `uninstall.exe` → 安装版 sidecar health 200 / 无 token 401 / 正确 token 200 / fresh 数据目录迁移 → 静默卸载干净（exit 0）。
-- [ ] 真人 GUI smoke：安装后启动桌面应用，人工过一遍 Job Radar → Profile 主链（自动化已覆盖安装布局与 sidecar 行为，此项只需真实桌面环境点击确认 UI 体验）。
-
-**Acceptance**：
-
-- 用户不需要 Python / Node / Rust 环境。
-- 安装后只需启动 Xiaoyue 即可使用 Core API。
-- Tauri 退出后不遗留 Core 子进程。
+**Acceptance**：普通 Windows 用户不安装 Python/Node/Rust 也能完成主链。
 
 ---
 
-## P1：产品主链继续补齐
+## P1：ATS Adapter 深化
 
-### 2. Dashboard 接真实数据
+### 2. 北森专项 adapter
 
-**Status**：TODO  
-**Priority**：P1
+**Status**：TODO
 
-- [ ] 今日新增 = 本地今日 `created_at` Job 数。
-- [ ] 可申请 = verified open 真实统计。
-- [ ] 已投递 / 面试 / Offer = Application CRM 实时统计。
-- [ ] 收藏使用独立 bookmark / saved-job 模型，不混进 canonical Job。
-- [ ] 空状态基于真实数据。
-- [ ] 首页提供待验证 / 待补 URL / 待跟进投递入口。
+- [ ] 收集真实北森 apply-form fixtures。
+- [ ] probe / page-state 识别。
+- [ ] 原生字段路径或稳定语义提取。
+- [ ] select / radio / date / repeatable section 行为验证。
+- [ ] post-fill readback。
+- [ ] 明确 unsupported controls，不用 generic fallback 冒充专项支持。
 
-**Acceptance**：首页不存在硬编码 KPI。
+### 3. 飞书招聘专项 adapter
 
----
+**Status**：TODO
 
-### 3. Application CRM Phase 2
+- [ ] 收集真实飞书招聘 fixtures。
+- [ ] 明确 form field identity。
+- [ ] 控件语义映射。
+- [ ] repeatable education/experience。
+- [ ] readback / validation。
+- [ ] popup / multi-step target 行为验证。
 
-**Status**：IN PROGRESS  
-**Priority**：P1
+### 4. Hotjob 专项 adapter
 
-**已完成**：
+**Status**：TODO
 
-- [x] `ApplicationSession` 第一版数据链。
-- [x] “开始申请”可以创建记录并打开入口。
-- [x] 投递中心展示记录并可手动修改状态。
-- [x] 已有 `OPENED / IN_PROGRESS / SUBMITTED / INTERVIEWING / OFFER / REJECTED / ABANDONED`。
+- [ ] 真实页面 probe。
+- [ ] 稳定字段 identity。
+- [ ] 控件行为与 readback。
+- [ ] 登录态/多步骤页面状态。
 
-**仍需完成**：
+### 5. Moka v2
 
-- [ ] 加入 `resume_version_id`，明确每次投递使用哪份简历。
-- [ ] 增加 Application Event Timeline，不只依赖最终 status。
-- [ ] 增加笔试 / 一面 / 二面 / HR 面等阶段事件。
-- [ ] 增加备注、下一步、跟进日期。
-- [ ] 增加重复投递检测（同 company/job/batch）。
-- [ ] 支持手动创建“已在外部投递”的记录。
-- [ ] Browser Agent 完成后写入同一 CRM，不新建第二套申请记录。
+**Status**：IN PROGRESS
 
-**Acceptance**：手工投递和 Browser Agent 投递共用同一 Application SSOT。
+Moka v1 已有 native path、indexed repeatable mapping 和受控 resume upload。仍需：
 
----
+- [ ] cascading select。
+- [ ] 没有 native path 的 repeatable section。
+- [ ] `practiceInfo` 与本地 experience SSOT 的安全归类。
+- [ ] customFields：只在有明确 schema/人工确认时支持。
+- [ ] iframe form。
+- [ ] 多步骤导航状态机。
+- [ ] 其他附件的独立风险模型。
 
-### 4. 设置页
-
-**Status**：TODO  
-**Priority**：P1
-
-- [ ] Provider 配置表单，对接 `GET/PUT /api/ai/provider`。
-- [ ] API Key 保存 / 删除，对接 `PUT/DELETE /api/ai/provider/api-key`，不回显明文。
-- [ ] Provider connectivity test。
-- [ ] 数据源状态 / 手动同步入口。
-- [ ] 本地数据目录只读展示 + 打开目录。
-- [ ] App / Core / DB schema version 展示。
+**明确不做**：自动点击最终提交。
 
 ---
 
-## P1：仍需解决的业务一致性问题
+## P1：Application CRM Phase 3
 
-### 5. Canonical Job 字段清空语义
+### 6. 更细的招聘阶段
 
-**Status**：TODO  
-**Priority**：P1
+**Status**：TODO
 
-`_merge_job_fields()` 需要明确区分 `MISSING` 与“上游明确清空”，否则旧 deadline/location 等值可能永久残留。
+当前已有 ApplicationSession、合法状态机、resume_version_id 和 immutable ApplicationEvent。
 
-- [ ] `MISSING` = 不更新。
-- [ ] `""` / `null` 按 source contract 表示显式清空。
-- [ ] 为 title / location / industry / batch / deadline 增加 reconciliation tests。
+继续增加：
 
----
+- [ ] 笔试。
+- [ ] 一面。
+- [ ] 二面。
+- [ ] HR 面。
+- [ ] 体检 / 背调（如有）。
+- [ ] Offer 接受/拒绝语义。
 
-## P2：工程化与发布质量
+优先考虑事件模型，不把所有细阶段继续塞进一个 status enum。
 
-### 6. CI / Release pipeline 补齐
+### 7. Follow-up / Note
 
-**Status**：IN PROGRESS  
-**Priority**：P2
+- [ ] 普通备注事件。
+- [ ] `next_follow_up_at`。
+- [ ] 待办视图。
+- [ ] 逾期提醒。
+- [ ] 面试时间/地点/会议链接。
 
-**已完成**：
+### 8. 外部投递与重复检测
 
-- [x] npm / Python / Cargo lock。
-- [x] Web tests / Core tests / migration tests。
-- [x] Web build / Cargo metadata / `cargo check`。
-- [x] CI 完整 `tauri build`。
-
-**仍需完成**：
-
-- [ ] `cargo clippy`。
-- [ ] `cargo test`（Rust 层有可测逻辑后）。
-- [ ] installer artifact 上传。
-- [ ] sidecar integration test：exe 启动 → Core ready → authenticated call → shutdown。
-- [ ] Playwright E2E：同步 → 浏览 → 验证 → 上传简历 → Draft Review → 开始申请。
-- [ ] 腾讯文档真实 payload fixture 回放。
-- [ ] `npm audit` / `pip-audit` / `cargo audit`。
-- [ ] main branch required checks / protection。
-- [ ] 1k / 10k Job verification scheduler benchmark。
+- [ ] 手动录入“已在官网/公众号/第三方完成”的申请。
+- [ ] company/job/batch 级重复投递提示。
+- [ ] external application id（可获得时）。
+- [ ] 同岗位多轮/重新投递的显式 attempt 语义。
 
 ---
 
-### 7. OpenAPI 前后端契约生成
+## P1：Dashboard / Product Surface
 
-**Status**：TODO  
-**Priority**：P2
+### 9. Dashboard 行动项
+
+真实 KPI 已接入。继续增加：
+
+- [ ] Browser Review Required 数量。
+- [ ] Profile 待确认 Draft 数。
+- [ ] Browser Fill FAILED / UNCERTAIN 待处理数。
+- [ ] follow-up 到期。
+- [ ] source quarantine 警告入口。
+
+### 10. Saved Job / Bookmark
+
+- [ ] 独立 saved-job/bookmark 模型。
+- [ ] 不把收藏状态塞进 canonical Job。
+- [ ] Dashboard 收藏统计只在模型落地后展示。
+
+### 11. Settings 补齐非 AI 项
+
+AI Provider 配置、Keyring、connectivity test、远程 HTTPS 已完成。
+
+仍需：
+
+- [ ] 本地数据目录只读展示。
+- [ ] 打开数据目录。
+- [ ] App / Core / DB schema version。
+- [ ] 数据源状态汇总入口。
+- [ ] cache/snapshot 占用信息。
+
+---
+
+## P2：E2E 与数据 fixtures
+
+### 12. Browser E2E
+
+- [ ] Playwright/可控 fixture：Browser Verify → Plan → Fill → readback。
+- [ ] Moka native path fixture。
+- [ ] Moka resume upload fixture。
+- [ ] same-URL SPA step change → stale plan。
+- [ ] popup/new-tab 不静默切 target。
+- [ ] React re-render 后值回退 → FAILED。
+- [ ] ambiguous option → 不自动选择。
+- [ ] final submit 永不自动触发。
+
+### 13. Source fixture replay
+
+- [ ] 腾讯 SmartSheet 真实 payload fixture。
+- [ ] completeness/quarantine replay。
+- [ ] missing-vs-explicit-clear reconciliation fixture。
+- [ ] WorkFind snapshot update fixture。
+
+### 14. 性能基准
+
+- [ ] 1k Job verification scheduler。
+- [ ] 10k Job verification scheduler。
+- [ ] URL verifier domain-concurrency benchmark。
+- [ ] Dashboard aggregate query benchmark。
+
+---
+
+## P2：接口与工程化
+
+### 15. OpenAPI generated types
 
 - [ ] 固化 FastAPI OpenAPI schema。
-- [ ] 使用 `openapi-typescript` 或等价方案生成前端 DTO。
-- [ ] 手写接口只保留业务 wrapper。
-- [ ] CI 检测 generated types 是否过期。
+- [ ] `openapi-typescript` 或等价方案生成前端 DTO。
+- [ ] 手写 client 只保留业务 wrapper。
+- [ ] CI 检测 generated types drift。
+
+### 16. Dependency / supply-chain audit
+
+- [ ] `npm audit` 策略。
+- [ ] `pip-audit`。
+- [ ] `cargo audit`。
+- [ ] 明确 audit failure policy 与 allowlist。
+
+### 17. Branch protection
+
+- [ ] main required CI checks。
+- [ ] 禁止未通过 required checks 的直接 merge。
+- [ ] 视需要要求 review。
+
+### 18. Snapshot / Vault retention
+
+- [ ] WorkFind snapshot GC：current + 最近 N 个成功版本 + DB 引用版本。
+- [ ] 腾讯 payload retention。
+- [ ] failed/orphan temp cleanup。
+- [ ] Browser Agent staging 异常退出 cleanup。
+- [ ] UI 展示磁盘占用。
+- [ ] 安全清理入口。
 
 ---
 
-### 8. Snapshot / Vault retention policy
+## P2：Release 文档
 
-**Status**：TODO  
-**Priority**：P2
+### 19. 安装与故障排查
 
-- [ ] WorkFind immutable snapshot GC：保留 current + 最近 N 个成功版本 + 被 DB 引用版本。
-- [ ] 腾讯 payload snapshot retention。
-- [ ] orphan temp / failed upload cleanup policy。
-- [ ] UI 展示缓存/数据占用并支持安全清理。
-- [ ] 如果未来出现多 Core 进程，再把 source sync 的进程内 single-flight 升级为持久 lease。
-
----
-
-### 9. README / 运行时文档同步
-
-**Status**：IN PROGRESS  
-**Priority**：P2
-
-- [x] README 已修正部分数据目录 / 当前 Phase 状态。
-- [x] 更新 Profile Structured Collections / Draft Review / 统一 AI 提取契约当前状态。
-- [ ] 更新 Tauri sidecar 打包状态。
-- [ ] 写 Release 安装 / 故障排查章节。
-- [ ] 每次完成架构项后同步 TODO 功能基线。
+- [ ] NSIS 安装说明。
+- [ ] WebView2 缺失提示。
+- [ ] Core sidecar 启动失败定位。
+- [ ] logs 路径说明。
+- [ ] AI Provider / Keyring 常见错误。
+- [ ] Browser Agent Edge/CDP 常见错误。
+- [ ] 数据备份与恢复说明。
 
 ---
 
-## Browser Agent 开工门槛
+## 已完成，不再作为 TODO
 
-- [x] main CI 全绿。
-- [x] Profile Structured Collections 已落地。
-- [x] AI Provider / Extraction Contract 已冻结并完成 run audit / idempotency。
-- [x] Application CRM SSOT 已确定。
-- [x] session token 使用 CSPRNG 并完成 auth tests。
-- [x] DNS rebinding / TOCTOU 已通过 pinned-IP 方案关闭。
-- [ ] Browser Agent 只读 confirmed Profile SSOT，不直接读取未经确认的 Draft。
-- [ ] 每次最终提交前都有人类确认 gate。
-- [ ] Browser Agent 投递结果写入现有 Application CRM。
+### Job / Source
 
----
+- [x] Canonical Company / Job / Source。
+- [x] WorkFind / 腾讯在线同步。
+- [x] Last Known Good。
+- [x] WorkFind immutable snapshot。
+- [x] Tencent completeness quarantine。
+- [x] quarantine 不再冒充 last-good/绿色健康状态。
+- [x] missing-vs-explicit-clear Job reconciliation。
+- [x] DB-side verification due filter。
+- [x] server-side pagination / major N+1 cleanup。
 
-## 建议执行顺序
+### Verification / Security
 
-```text
-① Tauri sidecar 打包 / installer 闭环
-   ↓
-② Application CRM Phase 2 + Dashboard + Settings
-   ↓
-③ Browser Agent（confirmed Profile SSOT + human-confirm gate）
-   ↓
-④ Release hardening / E2E / installer smoke / dependency audit
-```
+- [x] URL verifier SSRF guard。
+- [x] pinned-IP DNS rebinding / TOCTOU 防护。
+- [x] redirect 每跳重新验证。
+- [x] bounded reads / domain concurrency。
+- [x] Browser Verify 解开 SPA/login/WAF deadlock。
+- [x] fixed CDP target binding。
+- [x] page revision / stale Fill Plan。
+- [x] post-fill DOM readback。
+- [x] final submit human gate。
+- [x] local Core CSPRNG session token + auth middleware。
+- [x] remote AI Provider HTTPS；HTTP 仅 localhost/loopback。
 
----
+### Profile / Resume / AI
 
-## 最近完成（不再作为 TODO）
+- [x] Immutable Resume Vault。
+- [x] streaming upload / SHA-256 / PDF-DOCX guards。
+- [x] scalar + structured Profile SSOT。
+- [x] append-only revisions。
+- [x] Draft review。
+- [x] unified AI extraction contract。
+- [x] AIExtractionRun audit / idempotency。
+- [x] Keyring secret rotation。
+- [x] Browser semantic mapping schema-only，实际 Profile 值仅 Core 本地解析。
 
-以下事项已经在当前功能基线落地，并经过 CI 或对应回归测试验证：
+### Browser Agent / ATS
 
-- [x] Session token 硬化：OS CSPRNG 生成 256-bit token（Windows BCryptGenRandom），只存两侧进程内存与 Authorization 头，绝不落 SQLite/log（含 token-不落库回归断言）。
-- [x] Session auth E2E：无 token / 错 token → 401、正确 token → 200、health 豁免、foreign origin 拒绝、逐路由防绕过断言（未来 Browser Agent 高权限 router 天然被 middleware 覆盖）。
-- [x] Core clients 审计：全部 client 统一经 `coreRuntime()` 动态端点 + `authHeaders()` wrapper，修复 resumesClient 硬编码端点且不带 token 的缺口。
-- [x] CI 增加 `cargo test`（Rust 层 token 单测起）。
-- [x] 统一 AI Provider / Extraction Contract：唯一 `ProfileExtractionProvider` 契约（`metadata()` + `extract() → ProfileExtractionBundle`）；`ProfileExtractor/provider.complete()` 与 `OpenAICompatibleClient.extract_candidates()` 双轨实现已删除。
-- [x] `AIExtractionRun` 持久化（`0009_ai_extraction_runs` migration）：provider / model / prompt_version / schema_version / status / input_hash / error；provider 失败也落 FAILED run 而不是静默丢弃。
-- [x] scalar / collection Draft 均关联 `extraction_run_id` + `candidate_fingerprint`，同一 run 重放不产生重复候选（partial unique index 硬约束）。
-- [x] `Resume → AIExtractionRun → Draft → Review → Profile SSOT` 唯一正式链路；`POST / GET /api/ai/extraction-runs` 已落地，deterministic 导入链路走同一 orchestration。
-- [x] Provider 边界：输入/输出长度上限、timeout、坏 JSON / 空响应 → `ProviderResponseError`，网络 / HTTP 错误 → `ProviderRequestError`，部分非法候选单项丢弃、合法候选保留；OpenAI / DeepSeek / Qwen 切换只改 `AIProviderConfig`。
-- [x] Windows CI heredoc 问题修复；migration smoke 统一进入 pytest。
-- [x] main CI 实际执行并通过 Web / Core / migration / Web build / Cargo metadata / `cargo check` / `tauri build`。
-- [x] Alembic 为生产 schema source-of-truth；当前 migration chain 已扩展至 Profile Collections / Collection Drafts。
-- [x] migration-built schema 与 ORM metadata drift guard。
-- [x] SQLite foreign_keys / WAL / busy_timeout。
-- [x] Profile Structured Collections：Education / Experience / Project / Award / Certificate / Language / Skill。
-- [x] Collection CRUD / reorder / source / confidence / confirmed。
-- [x] Collection revision history；删除 live item 后仍保留稳定 audit item id。
-- [x] Collection Draft 单项 accept / reject，accept 与 SSOT revision 同事务。
-- [x] ProfilePage 分段结构化编辑器 + 结构化候选审核 UI。
-- [x] 旧 scalar Profile 字段继续保留，collection migrations 不丢旧数据。
-- [x] DNS rebinding / TOCTOU pinned-IP：resolve once、校验全部地址、连接固定 IP、保留 Host/TLS SNI、redirect 每跳重新 pin。
-- [x] Verification 状态保护：ACCESS_BLOCKED / LOGIN_REQUIRED / REQUIRES_BROWSER 不再直接破坏已验证业务状态。
-- [x] Verification scheduler 使用 `jobs.next_verification_at` 做 DB 侧 due filter，去除原 N+1 路径。
-- [x] Resume 真流式 temp-file ingest + incremental SHA-256 + ZIP bomb guards。
-- [x] Source Sync 进程内 per-source single-flight。
-- [x] Job identity 不再把 generic careers homepage 当 job-detail 强唯一身份。
-- [x] WorkFind content-addressed immutable snapshots + atomic current pointer。
-- [x] Tencent feed completeness gate / QUARANTINED mass-tombstone guard。
-- [x] Canonical URL candidate → verify → promote 流程。
-- [x] Company Resolver 三态：RESOLVED / AMBIGUOUS / NOT_FOUND。
-- [x] URL verifier redirect-chain SSRF guard / SPA shell classification / bounded concurrency。
-- [x] Job Radar server-side pagination。
-- [x] `GET /api/jobs` 主要 N+1 已消除。
-- [x] Resume Vault + scalar Profile SSOT + Draft Review 基线。
-- [x] AI Provider config + keyring secret rotation 后端基线。
-- [x] Application CRM 第一版 + “开始申请”手动入口记录。
-- [x] Tauri sidecar 启动 / 动态端口 / endpoint command / 退出清理基础。
-- [x] Local API Bearer session-token middleware + loopback Host/Origin 校验基础。
+- [x] verify/fill permission separation。
+- [x] conservative value normalization。
+- [x] ATS adapter registry。
+- [x] Moka `moka_dom_v1`。
+- [x] Moka native path / Ant-style id mapping。
+- [x] indexed repeatable mapping。
+- [x] controlled ResumeVersion upload。
+- [x] browser FileList filename readback。
+- [x] successful upload → CRM resume_version_id。
+- [x] `RESUME_LINKED` ApplicationEvent。
+- [x] arbitrary attachment / submit controls remain blocked。
+
+### CRM / Dashboard
+
+- [x] Application lifecycle state machine。
+- [x] active attempt de-duplication。
+- [x] resume_version_id。
+- [x] immutable ApplicationEvent timeline。
+- [x] Browser Agent status/event integration。
+- [x] real Dashboard aggregate metrics。
+- [x] data-driven empty states。
+
+### Windows CI / Release
+
+- [x] Web tests。
+- [x] Core tests。
+- [x] Alembic migration tests。
+- [x] Web build。
+- [x] PyInstaller sidecar build。
+- [x] sidecar health/auth/migration smoke。
+- [x] `cargo check`。
+- [x] `cargo clippy -- -D warnings`。
+- [x] `cargo test`。
+- [x] full `tauri build`。
+- [x] NSIS installer artifact upload。
