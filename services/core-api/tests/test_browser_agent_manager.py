@@ -447,6 +447,23 @@ def test_manager_uploads_only_explicit_resume_version_to_current_moka_plan(clien
     assert result["status"] == "VERIFIED"
     assert result["resume_version_id"] == resume_id
     assert result["filename"] == "赵新悦-央企简历.pdf"
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            application = session.get(ApplicationSession, application_id)
+            assert application is not None
+            assert application.resume_version_id == resume_id
+            events = session.query(ApplicationEvent).filter(
+                ApplicationEvent.application_id == application_id
+            ).order_by(ApplicationEvent.id).all()
+            assert [(event.event_type, event.from_status, event.to_status) for event in events] == [
+                ("RESUME_LINKED", "OPENED", "OPENED"),
+            ]
+            assert events[0].note == f"{resume_id} · 赵新悦-央企简历.pdf"
+    finally:
+        engine.dispose()
+
     assert backend.uploaded is not None
     assert backend.uploaded[0] == "resume-file"
     staged_path = backend.uploaded[1]
@@ -482,3 +499,43 @@ def test_manager_rejects_resume_upload_after_page_revision_changes(client, monke
     with pytest.raises(BrowserAgentPlanError, match="页面结构已变化"):
         manager.upload_resume(info.id, plan.token, "resume-file", resume_id)
     assert backend.uploaded is None
+
+
+class FakeMokaUploadMismatchBackend(FakeMokaUploadBackend):
+    def upload_file(self, handle, field_id: str, file_path: Path):
+        self.uploaded = (field_id, file_path)
+        return {
+            "filename": "different.pdf",
+            "size": file_path.stat().st_size,
+            "type": "application/pdf",
+        }
+
+
+def test_manager_does_not_link_resume_when_browser_readback_fails(client, monkeypatch):
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    application_id = _seed_application_and_profile()
+    resume_id = _seed_resume_version()
+    backend = FakeMokaUploadMismatchBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+
+    with pytest.raises(BrowserAgentPlanError, match="未确认所选简历文件名"):
+        manager.upload_resume(info.id, plan.token, "resume-file", resume_id)
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            application = session.get(ApplicationSession, application_id)
+            assert application is not None
+            assert application.resume_version_id is None
+            events = session.query(ApplicationEvent).filter(
+                ApplicationEvent.application_id == application_id
+            ).all()
+            assert events == []
+    finally:
+        engine.dispose()
