@@ -17,7 +17,11 @@ from ..db import get_engine
 from ..models import AIProviderConfig, ApplicationSession, Job
 from ..verification.service import promote_browser_verified
 from ..verification.url_guard import validate_external_url
-from .adapters import select_browser_adapter
+from .adapters import (
+    adapt_scan_for_browser_adapter,
+    get_browser_adapter,
+    select_browser_adapter,
+)
 from .cdp import BrowserControlError, BrowserUnavailableError, EdgeBrowserBackend, EdgeHandle
 from .mapping import build_fill_plan
 from .models import BrowserAgentSessionInfo, FillPlan, FormScan
@@ -105,6 +109,7 @@ def _page_revision(scan: FormScan) -> str:
                 "options": field.options,
                 "disabled": field.disabled,
                 "readonly": field.readonly,
+                "adapter_source_path": field.adapter_source_path,
             }
             for field in scan.fields
         ],
@@ -200,13 +205,14 @@ class BrowserAgentManager:
         if runtime.info.mode != "fill":
             raise BrowserAgentConflictError("Verify-mode sessions cannot build or execute fill plans")
         scan = self._backend.scan(runtime.handle)
+        adapter = select_browser_adapter(scan.url or runtime.info.url)
+        scan = adapt_scan_for_browser_adapter(adapter, scan)
         engine = get_engine(get_settings())
         try:
             with Session(engine) as db:
                 snapshot = build_confirmed_profile_snapshot(db)
         finally:
             engine.dispose()
-        adapter = select_browser_adapter(scan.url or runtime.info.url)
         plan = build_fill_plan(
             snapshot,
             scan,
@@ -232,7 +238,10 @@ class BrowserAgentManager:
         if not plan.unmatched:
             return plan
 
-        current_scan = self._backend.scan(runtime.handle)
+        current_scan = adapt_scan_for_browser_adapter(
+            get_browser_adapter(plan.adapter_id),
+            self._backend.scan(runtime.handle),
+        )
         if current_scan.url != plan.page_url or _page_revision(current_scan) != plan.page_revision:
             raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再使用 AI 补全。")
 
@@ -272,7 +281,10 @@ class BrowserAgentManager:
         if unknown:
             raise BrowserAgentPlanError(f"填写计划不包含字段: {', '.join(unknown)}")
 
-        current_scan = self._backend.scan(runtime.handle)
+        current_scan = adapt_scan_for_browser_adapter(
+            get_browser_adapter(plan.adapter_id),
+            self._backend.scan(runtime.handle),
+        )
         if current_scan.url != plan.page_url:
             raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再填写。")
         current_fields = {field.field_id: field for field in current_scan.fields}
