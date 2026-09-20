@@ -280,6 +280,44 @@ def build_fill_plan(
             plan.blocked.append(_summary(field))
             continue
 
+        if field.adapter_source_path:
+            source_path = field.adapter_source_path
+            value = _source_value(snapshot, source_path)
+            if value is None:
+                plan.unmatched.append(_summary(field))
+                continue
+
+            normalized_value = normalize_value_for_control(source_path, value, field)
+            if normalized_value is None:
+                plan.unmatched.append(_summary(field))
+                continue
+
+            source_sensitive = False
+            if not source_path.startswith("collections."):
+                try:
+                    source_sensitive = get_field_definition(source_path).sensitive
+                except KeyError:
+                    source_sensitive = False
+
+            control_needs_confirmation = (
+                field.tag.lower() == "select"
+                or input_type in {"radio", "radio_group", "combobox", "date_picker"}
+                or source_sensitive
+            )
+            plan.items.append(
+                FillPlanItem(
+                    field_id=field.field_id,
+                    label=field.label or field.aria_label or field.placeholder or field.name or field.field_id,
+                    control_type=input_type,
+                    value=normalized_value,
+                    source_path=source_path,
+                    confidence=1.0,
+                    reason=f"{adapter_display_name} native field path",
+                    requires_confirmation=control_needs_confirmation,
+                )
+            )
+            continue
+
         candidates: list[tuple[float, str, str, Any, tuple[str, str] | None]] = []
         for rule in _RULES:
             scored = _rule_score(field, rule)
