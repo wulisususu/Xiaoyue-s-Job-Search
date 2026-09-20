@@ -111,6 +111,7 @@ def _page_revision(scan: FormScan) -> str:
                 "disabled": field.disabled,
                 "readonly": field.readonly,
                 "adapter_source_path": field.adapter_source_path,
+                "adapter_action": field.adapter_action,
             }
             for field in scan.fields
         ],
