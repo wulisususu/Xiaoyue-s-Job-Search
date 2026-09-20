@@ -27,9 +27,21 @@ def test_beisen_is_promoted_to_dedicated_path_aware_adapter():
     assert "auto_submit" in adapter.limitations
 
 
+def test_feishu_is_promoted_to_dedicated_path_aware_adapter():
+    adapter = select_browser_adapter("https://jobs.feishu.cn/apply/123")
+    assert adapter.id == "feishu"
+    assert adapter.display_name == "飞书招聘"
+    assert adapter.implementation == "feishu_dom_v1"
+    assert "feishu_talent_paths" in adapter.capabilities
+    assert "indexed_repeatable_mapping" in adapter.capabilities
+    assert "file_upload" in adapter.limitations
+    assert "high_risk_identity_fields" in adapter.limitations
+    assert "feishu_customized_data" in adapter.limitations
+    assert "auto_submit" in adapter.limitations
+
+
 def test_other_known_ats_hosts_remain_honest_generic_dom_adapters():
     cases = {
-        "https://jobs.feishu.cn/apply/123": ("feishu", "飞书招聘"),
         "https://company.hotjob.cn/wt/apply": ("hotjob", "Hotjob"),
     }
 
