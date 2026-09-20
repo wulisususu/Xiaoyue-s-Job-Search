@@ -18,6 +18,7 @@ class FormFieldDescriptor:
     label: str
     name: str
     placeholder: str
+    dom_id: str = ""
     aria_label: str
     section: str
     required: bool
