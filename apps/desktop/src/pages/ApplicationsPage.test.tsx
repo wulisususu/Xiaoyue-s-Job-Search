@@ -38,12 +38,13 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     adapter_id: 'moka',
     adapter_display_name: 'Moka',
     adapter_implementation: 'moka_dom_v1',
-    adapter_capabilities: ['dom_scan', 'post_fill_readback', 'moka_native_field_paths', 'indexed_repeatable_mapping'],
-    adapter_limitations: ['file_upload', 'cascading_select', 'practice_experience_disambiguation', 'auto_submit'],
+    adapter_capabilities: ['dom_scan', 'post_fill_readback', 'moka_native_field_paths', 'indexed_repeatable_mapping', 'resume_upload'],
+    adapter_limitations: ['additional_attachments', 'cascading_select', 'practice_experience_disambiguation', 'auto_submit'],
     items: [
       { field_id: 'f-name', label: '姓名', control_type: 'text', value: '赵新悦', source_path: 'identity.name', confidence: 0.99, reason: '姓名', requires_confirmation: false },
       { field_id: 'f-origin', label: '生源地', control_type: 'text', value: '安徽', source_path: 'location.hukou', confidence: 0.72, reason: '生源地≈户籍地', requires_confirmation: true },
     ],
+    attachments: [{ field_id: 'resume-file', label: '上传简历', kind: 'resume', required: true }],
     unmatched: [{ field_id: 'f-contact', label: '紧急联系人', control_type: 'text' }],
     blocked: [],
   };
@@ -57,6 +58,25 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     if (url.endsWith('/api/browser-agent/sessions')) {
       return Promise.resolve(new Response(JSON.stringify([session]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
+    if (url.endsWith('/api/resumes')) {
+      return Promise.resolve(new Response(JSON.stringify([
+        {
+          id: 'resume-v2',
+          sha256: 'a'.repeat(64),
+          original_filename: '赵新悦-央企简历.pdf',
+          file_ext: '.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 1024,
+          version_number: 2,
+          extraction_status: 'EXTRACTED',
+          parser_name: 'pypdf',
+          parser_version: '1',
+          extraction_error: null,
+          created_at: '2026-09-19T07:00:00',
+          pending_draft_count: 0,
+        },
+      ]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
     if (url.endsWith('/api/browser-agent/sessions/agent-1/plan')) {
       return Promise.resolve(new Response(JSON.stringify(plan), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
@@ -69,6 +89,14 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
           { field_id: 'f-contact', label: '紧急联系人', control_type: 'text', value: '未提供', source_path: 'identity.name', confidence: 0.55, reason: 'AI suggestion', requires_confirmation: true },
         ],
         unmatched: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    }
+    if (url.endsWith('/api/browser-agent/sessions/agent-1/resume-upload')) {
+      return Promise.resolve(new Response(JSON.stringify({
+        field_id: 'resume-file',
+        resume_version_id: 'resume-v2',
+        filename: '赵新悦-央企简历.pdf',
+        status: 'VERIFIED',
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
     if (url.endsWith('/api/browser-agent/sessions/agent-1/fill')) {
@@ -107,6 +135,23 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
   expect(screen.getByText(/Moka 专项 DOM v1/)).toBeInTheDocument();
   expect(screen.getByText(/附件上传、级联选择、实习\/工作经历归类、自动提交/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'AI 补全未匹配' })).toBeInTheDocument();
+
+  const resumeSelect = screen.getByRole('combobox', { name: '选择上传简历版本' }) as HTMLSelectElement;
+  expect(resumeSelect.value).toBe('');
+  expect(screen.getByRole('button', { name: '上传所选简历' })).toBeDisabled();
+  fireEvent.change(resumeSelect, { target: { value: 'resume-v2' } });
+  fireEvent.click(screen.getByRole('button', { name: '上传所选简历' }));
+
+  await waitFor(() => {
+    const upload = calls.find((call) => call.url.endsWith('/api/browser-agent/sessions/agent-1/resume-upload'));
+    expect(upload).toBeDefined();
+    expect(JSON.parse(String(upload!.init?.body))).toEqual({
+      plan_token: 'plan-1',
+      field_id: 'resume-file',
+      resume_version_id: 'resume-v2',
+    });
+    expect(screen.getByText(/已回读：赵新悦-央企简历.pdf/)).toBeInTheDocument();
+  });
 
   fireEvent.click(screen.getByRole('button', { name: 'AI 补全未匹配' }));
   await waitFor(() => expect(screen.getByText('identity.name', { selector: 'code' })).toBeInTheDocument());
