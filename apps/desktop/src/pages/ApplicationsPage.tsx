@@ -28,8 +28,6 @@ const statusLabel: Record<string, string> = {
   ABANDONED: '已放弃',
 };
 
-const statusOptions = ['OPENED', 'IN_PROGRESS', 'SUBMITTED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'ABANDONED'];
-
 export function ApplicationsPage() {
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [sessions, setSessions] = useState<BrowserAgentSession[]>([]);
