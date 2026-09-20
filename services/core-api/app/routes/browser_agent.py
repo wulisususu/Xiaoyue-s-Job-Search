@@ -66,6 +66,11 @@ class FillPlanRead(BaseModel):
     session_id: str
     page_url: str
     page_revision: str
+    adapter_id: str
+    adapter_display_name: str
+    adapter_implementation: str
+    adapter_capabilities: list[str]
+    adapter_limitations: list[str]
     items: list[FillPlanItemRead]
     unmatched: list[PlanFieldSummaryRead]
     blocked: list[PlanFieldSummaryRead]
@@ -120,6 +125,11 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
         session_id=plan.session_id,
         page_url=plan.page_url,
         page_revision=plan.page_revision,
+        adapter_id=plan.adapter_id,
+        adapter_display_name=plan.adapter_display_name,
+        adapter_implementation=plan.adapter_implementation,
+        adapter_capabilities=list(plan.adapter_capabilities),
+        adapter_limitations=list(plan.adapter_limitations),
         items=[
             FillPlanItemRead(
                 **{
