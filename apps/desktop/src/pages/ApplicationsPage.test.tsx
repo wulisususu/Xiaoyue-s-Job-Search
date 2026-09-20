@@ -10,6 +10,7 @@ afterEach(() => {
 
 it('reviews a Browser Agent fill plan before sending approved field ids', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let resumeLinked = false;
   const application = {
     id: 1,
     job_id: 'job-1',
@@ -55,7 +56,9 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     const url = String(input);
     calls.push({ url, init });
     if (url.endsWith('/api/applications')) {
-      return Promise.resolve(new Response(JSON.stringify([application]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      return Promise.resolve(new Response(JSON.stringify([
+        resumeLinked ? { ...application, resume_version_id: 'resume-v2' } : application,
+      ]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
     if (url.endsWith('/api/browser-agent/sessions')) {
       return Promise.resolve(new Response(JSON.stringify([session]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -94,6 +97,7 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
     if (url.endsWith('/api/browser-agent/sessions/agent-1/resume-upload')) {
+      resumeLinked = true;
       return Promise.resolve(new Response(JSON.stringify({
         field_id: 'resume-file',
         resume_version_id: 'resume-v2',
@@ -153,7 +157,9 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
       resume_version_id: 'resume-v2',
     });
     expect(screen.getByText(/已回读：赵新悦-央企简历.pdf/)).toBeInTheDocument();
+    expect(screen.getByText('resume-v2', { selector: 'code' })).toBeInTheDocument();
   });
+  expect(calls.filter((call) => call.url.endsWith('/api/applications')).length).toBeGreaterThanOrEqual(2);
 
   fireEvent.click(screen.getByRole('button', { name: 'AI 补全未匹配' }));
   await waitFor(() => expect(screen.getByText('identity.name', { selector: 'code' })).toBeInTheDocument());
@@ -210,6 +216,15 @@ it('loads CRM timeline lazily alongside Moka resume support', async () => {
       note: '官网确认提交成功',
       created_at: '2026-09-20T09:00:00',
     },
+    {
+      id: 3,
+      application_id: 7,
+      event_type: 'RESUME_LINKED',
+      from_status: 'SUBMITTED',
+      to_status: 'SUBMITTED',
+      note: 'resume-v3 · 央企设计岗.pdf',
+      created_at: '2026-09-20T09:05:00',
+    },
   ];
 
   const calls: string[] = [];
@@ -265,5 +280,7 @@ it('loads CRM timeline lazily alongside Moka resume support', async () => {
   await waitFor(() => expect(screen.getByText('官网确认提交成功')).toBeInTheDocument());
   expect(screen.getByText('创建投递记录')).toBeInTheDocument();
   expect(screen.getByText('已打开入口 → 已投递')).toBeInTheDocument();
+  expect(screen.getByText('绑定简历版本')).toBeInTheDocument();
+  expect(screen.getByText('resume-v3 · 央企设计岗.pdf')).toBeInTheDocument();
   expect(calls.filter((url) => url.endsWith('/api/applications/7/events'))).toHaveLength(1);
 });

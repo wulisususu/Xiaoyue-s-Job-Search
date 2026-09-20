@@ -249,8 +249,14 @@ export function ApplicationsPage() {
         resumeVersionId,
       );
       setUploadedResumes((current) => ({ ...current, [key]: result.filename }));
+      const rows = await getApplications();
+      setApplications(rows);
+      if (expandedTimelineId === applicationId) {
+        const events = await getApplicationEvents(applicationId);
+        setTimelineEvents((current) => ({ ...current, [applicationId]: events }));
+      }
       setMessage(
-        `已将简历版本上传到“${attachment.label}”：${result.filename}。页面仍未提交，请继续人工检查。`,
+        `已将简历版本上传到“${attachment.label}”：${result.filename}。CRM 已绑定该简历版本；页面仍未提交，请继续人工检查。`,
       );
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : '简历上传失败');
@@ -616,6 +622,7 @@ function attachmentSelectionKey(applicationId: number, fieldId: string): string 
 
 function applicationEventLabel(event: ApplicationEventRecord): string {
   if (event.event_type === 'CREATED') return '创建投递记录';
+  if (event.event_type === 'RESUME_LINKED') return '绑定简历版本';
   if (event.event_type === 'STATUS_CHANGED') {
     const from = event.from_status ? statusLabel[event.from_status] ?? event.from_status : '未知';
     const to = statusLabel[event.to_status] ?? event.to_status;
