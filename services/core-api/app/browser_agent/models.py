@@ -59,6 +59,11 @@ class FillPlan:
     session_id: str
     page_url: str
     page_revision: str = ""
+    adapter_id: str = "generic"
+    adapter_display_name: str = "通用招聘表单"
+    adapter_implementation: str = "generic_dom"
+    adapter_capabilities: list[str] = field(default_factory=list)
+    adapter_limitations: list[str] = field(default_factory=list)
     items: list[FillPlanItem] = field(default_factory=list)
     unmatched: list[PlanFieldSummary] = field(default_factory=list)
     blocked: list[PlanFieldSummary] = field(default_factory=list)
