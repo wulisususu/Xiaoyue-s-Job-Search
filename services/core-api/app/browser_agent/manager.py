@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
+import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -16,7 +18,7 @@ from ..models import AIProviderConfig, ApplicationSession, Job
 from ..verification.url_guard import validate_external_url
 from .cdp import BrowserControlError, BrowserUnavailableError, EdgeBrowserBackend, EdgeHandle
 from .mapping import build_fill_plan
-from .models import BrowserAgentSessionInfo, FillPlan
+from .models import BrowserAgentSessionInfo, FillPlan, FormScan
 from .profile_snapshot import build_confirmed_profile_snapshot
 from .semantic_mapping import OpenAICompatibleSemanticMappingProvider, apply_semantic_suggestions
 
@@ -35,6 +37,33 @@ class BrowserAgentPlanError(RuntimeError):
 
 class BrowserAgentAIUnavailableError(RuntimeError):
     pass
+
+
+def _page_revision(scan: FormScan) -> str:
+    payload = {
+        "target_id": scan.target_id,
+        "url": scan.url,
+        "title": scan.title,
+        "fields": [
+            {
+                "field_id": field.field_id,
+                "tag": field.tag,
+                "input_type": field.input_type,
+                "label": field.label,
+                "name": field.name,
+                "placeholder": field.placeholder,
+                "aria_label": field.aria_label,
+                "section": field.section,
+                "required": field.required,
+                "options": field.options,
+                "disabled": field.disabled,
+                "readonly": field.readonly,
+            }
+            for field in scan.fields
+        ],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(slots=True)
@@ -120,7 +149,12 @@ class BrowserAgentManager:
                 snapshot = build_confirmed_profile_snapshot(db)
         finally:
             engine.dispose()
-        plan = build_fill_plan(snapshot, scan, session_id=session_id)
+        plan = build_fill_plan(
+            snapshot,
+            scan,
+            session_id=session_id,
+            page_revision=_page_revision(scan),
+        )
         runtime.latest_plan = plan
         runtime.info.url = scan.url or runtime.info.url
         return plan
@@ -134,7 +168,7 @@ class BrowserAgentManager:
             return plan
 
         current_scan = self._backend.scan(runtime.handle)
-        if current_scan.url != plan.page_url:
+        if current_scan.url != plan.page_url or _page_revision(current_scan) != plan.page_revision:
             raise BrowserAgentPlanError("页面已变化，请重新扫描表单后再使用 AI 补全。")
 
         engine = get_engine(get_settings())
@@ -186,6 +220,8 @@ class BrowserAgentManager:
             raise BrowserAgentPlanError(
                 f"页面控件已变化，请重新扫描: {', '.join(sorted(stale))}"
             )
+        if _page_revision(current_scan) != plan.page_revision:
+            raise BrowserAgentPlanError("页面结构已变化，请重新扫描表单后再填写。")
 
         approved_values = {field_id: by_id[field_id].value for field_id in field_ids}
         result = self._backend.fill(runtime.handle, approved_values)
