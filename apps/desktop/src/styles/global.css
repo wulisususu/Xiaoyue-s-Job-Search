@@ -121,6 +121,9 @@ button, input, select, textarea { font: inherit; }
 .agent-plan { margin-top: 13px; padding-top: 13px; border-top: 1px solid #e6ebf2; }
 .agent-safety-note { padding: 9px 11px; border-radius: 9px; background: #eef4fb; color: #52627a; font-size: 11px; line-height: 1.55; }
 .agent-plan-list { display: grid; gap: 7px; margin: 11px 0; }
+.agent-attachment-list { display: grid; gap: 8px; margin: 12px 0; }
+.agent-attachment-row { display: grid; grid-template-columns: minmax(180px,1fr) minmax(220px,1fr) auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px dashed #cfd8e6; border-radius: 10px; background: white; }
+.agent-attachment-row select { min-width: 0; }
 .agent-plan-row { display: grid; grid-template-columns: 20px minmax(150px,.9fr) minmax(160px,1.2fr) auto; gap: 9px; align-items: center; padding: 10px; border: 1px solid #e2e8f0; border-radius: 10px; background: white; cursor: pointer; }
 .agent-plan-row.needs-review { border-color: #ead9aa; background: #fffcf4; }
 .agent-plan-copy strong, .agent-plan-copy small { display: block; }
@@ -132,6 +135,7 @@ button, input, select, textarea { font: inherit; }
 .agent-blocked { color: #8a5a5a; }
 @media (max-width: 1180px) {
   .agent-panel-header { flex-direction: column; }
+  .agent-attachment-row { grid-template-columns: 1fr; }
   .agent-plan-row { grid-template-columns: 20px 1fr auto; }
   .agent-value { grid-column: 2 / -1; }
 }
