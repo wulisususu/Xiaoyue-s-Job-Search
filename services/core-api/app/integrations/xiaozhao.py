@@ -16,6 +16,11 @@ from .types import ImportSummary
 SOURCE_ACTIVE = "ACTIVE"
 SOURCE_STALE = "STALE"
 
+# Distinguish an omitted upstream field from an explicitly blank/null field.
+# Omitted means "this source has no update for the canonical value"; present
+# blank/null means "the source explicitly cleared this value".
+_MISSING = object()
+
 
 def _identity_key(company_name: str, title: str, url: str, batch: str) -> str:
     """Stable per-record identity.
@@ -36,11 +41,37 @@ def _record_hash(record: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:64]
 
 
-def _merge_job_fields(job: Job, values: dict[str, str | None]) -> bool:
+def _source_field(record: dict, key: str):
+    if key not in record:
+        return _MISSING
+    raw = record[key]
+    if raw is None:
+        return None
+    return str(raw).strip()
+
+
+def _industry_field(record: dict):
+    # "ind" is the structured industry field. Only fall back to the legacy
+    # "t" field when "ind" is absent; an explicit ind=null/"" is a clear.
+    if "ind" in record:
+        return _source_field(record, "ind")
+    return _source_field(record, "t")
+
+
+def _new_job_text(value, *, fallback: str = "") -> str:
+    if value is _MISSING or value is None or value == "":
+        return fallback
+    return str(value)
+
+
+def _merge_job_fields(job: Job, values: dict[str, object]) -> bool:
     changed = False
     for key, value in values.items():
-        if value and getattr(job, key) != value:
-            setattr(job, key, value)
+        if value is _MISSING:
+            continue
+        normalized = "" if value is None else str(value)
+        if getattr(job, key) != normalized:
+            setattr(job, key, normalized)
             changed = True
     return changed
 
@@ -129,11 +160,20 @@ def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = 
     for record in records:
         summary.records_seen += 1
         company_name = str(record.get("c") or "").strip()
-        title = str(record.get("p") or "").strip() or "未标注岗位"
-        location = str(record.get("l") or "").strip()
-        batch = str(record.get("w") or "").strip()
-        deadline = str(record.get("d") or "").strip()
-        industry = str(record.get("ind") or record.get("t") or "").strip()
+        title_value = _source_field(record, "p")
+        location_value = _source_field(record, "l")
+        batch_value = _source_field(record, "w")
+        deadline_value = _source_field(record, "d")
+        industry_value = _industry_field(record)
+
+        # New rows still need concrete values for identity/display. Existing
+        # rows use the sentinel-aware values below so omission and clearing
+        # keep distinct semantics.
+        title = _new_job_text(title_value, fallback="未标注岗位")
+        location = _new_job_text(location_value)
+        batch = _new_job_text(batch_value)
+        deadline = _new_job_text(deadline_value)
+        industry = _new_job_text(industry_value)
         url = str(record.get("u") or "").strip()
         resolution = resolve_company_detailed(session, company_name or "未知企业", create_unknown=False)
         if resolution.state == AMBIGUOUS:
@@ -164,11 +204,11 @@ def import_xiaozhao_payload(session: Session, payload: dict, source_name: str = 
                 job.canonical_url = canonical_url
                 job.status = "DISCOVERED_URL_UNVERIFIED"
             _merge_job_fields(job, {
-                "title": title,
-                "location": location,
-                "industry": industry,
-                "recruitment_batch": batch,
-                "deadline_text": deadline,
+                "title": title_value,
+                "location": location_value,
+                "industry": industry_value,
+                "recruitment_batch": batch_value,
+                "deadline_text": deadline_value,
             })
             job.source_updated_at = updated or job.source_updated_at
             if job.status == "STALE":
