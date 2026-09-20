@@ -146,3 +146,55 @@ def test_moka_scan_uses_dom_id_when_react_control_has_no_name_attribute():
     adapted = adapt_scan_for_browser_adapter(adapter, raw_scan)
 
     assert adapted.fields[0].adapter_source_path == "collections.education[1].school"
+
+
+def test_moka_only_promotes_native_resume_file_control_to_attachment_candidate():
+    snapshot = ConfirmedProfileSnapshot(scalars={}, collections={})
+    raw_scan = FormScan(
+        url="https://app.mokahr.com/apply/acme/site#/job/1/apply",
+        title="职位申请",
+        fields=[
+            FormFieldDescriptor(
+                field_id="resume-file",
+                tag="input",
+                input_type="file",
+                label="上传简历",
+                name="resume",
+                placeholder="",
+                aria_label="",
+                section="简历",
+                required=True,
+                options=[],
+            ),
+            FormFieldDescriptor(
+                field_id="other-file",
+                tag="input",
+                input_type="file",
+                label="其他附件",
+                name="attachments",
+                placeholder="",
+                aria_label="",
+                section="附件",
+                required=False,
+                options=[],
+            ),
+        ],
+    )
+    adapter = select_browser_adapter(raw_scan.url)
+    scan = adapt_scan_for_browser_adapter(adapter, raw_scan)
+    plan = build_fill_plan(
+        snapshot,
+        scan,
+        adapter_id=adapter.id,
+        adapter_display_name=adapter.display_name,
+        adapter_implementation=adapter.implementation,
+        adapter_capabilities=list(adapter.capabilities),
+        adapter_limitations=list(adapter.limitations),
+    )
+
+    assert scan.fields[0].adapter_action == "resume_upload"
+    assert scan.fields[1].adapter_action == ""
+    assert [(item.field_id, item.kind, item.required) for item in plan.attachments] == [
+        ("resume-file", "resume", True),
+    ]
+    assert [item.field_id for item in plan.blocked] == ["other-file"]
