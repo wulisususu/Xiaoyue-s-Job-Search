@@ -1,9 +1,20 @@
 from app.browser_agent.adapters import get_browser_adapter, select_browser_adapter
 
 
-def test_known_ats_hosts_share_verifier_identity_but_do_not_overclaim_dedicated_support():
+def test_moka_is_promoted_to_dedicated_path_aware_adapter():
+    adapter = select_browser_adapter("https://app.mokahr.com/apply/123")
+    assert adapter.id == "moka"
+    assert adapter.display_name == "Moka"
+    assert adapter.implementation == "moka_dom_v1"
+    assert "moka_native_field_paths" in adapter.capabilities
+    assert "indexed_repeatable_mapping" in adapter.capabilities
+    assert "file_upload" in adapter.limitations
+    assert "moka_custom_fields" in adapter.limitations
+    assert "auto_submit" in adapter.limitations
+
+
+def test_other_known_ats_hosts_remain_honest_generic_dom_adapters():
     cases = {
-        "https://app.mokahr.com/apply/123": ("moka", "Moka"),
         "https://career.beisen.com/apply/123": ("beisen", "北森"),
         "https://jobs.feishu.cn/apply/123": ("feishu", "飞书招聘"),
         "https://company.hotjob.cn/wt/apply": ("hotjob", "Hotjob"),
