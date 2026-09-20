@@ -80,9 +80,21 @@ class FillRequest(BaseModel):
     field_ids: list[str]
 
 
+class FillFieldResultRead(BaseModel):
+    field_id: str
+    requested: object
+    observed: object | None = None
+    status: str
+    reason: str
+
+
 class FillResultRead(BaseModel):
     filled_count: int
     skipped_count: int
+    verified_count: int
+    failed_count: int
+    uncertain_count: int
+    results: list[FillFieldResultRead]
     status: str
 
 
