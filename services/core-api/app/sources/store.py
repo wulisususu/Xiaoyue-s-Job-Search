@@ -7,10 +7,21 @@ from ..models import SourceSnapshot, SourceSyncRun, utcnow
 
 
 def latest_good_snapshot(session: Session, source_name: str) -> SourceSnapshot | None:
+    """Return the most recent snapshot backed by a known-good sync run.
+
+    Snapshot rows are immutable raw artifacts, not proof of source health.
+    QUARANTINED pulls deliberately create snapshots for audit/replay, so a
+    simple "latest snapshot" query can incorrectly advertise quarantined data
+    as the last good version.
+    """
     return session.scalar(
         select(SourceSnapshot)
-        .where(SourceSnapshot.source_name == source_name)
-        .order_by(SourceSnapshot.id.desc())
+        .join(SourceSyncRun, SourceSyncRun.snapshot_id == SourceSnapshot.id)
+        .where(
+            SourceSnapshot.source_name == source_name,
+            SourceSyncRun.status.in_(["SUCCESS", "UNCHANGED"]),
+        )
+        .order_by(SourceSyncRun.finished_at.desc(), SourceSyncRun.id.desc())
         .limit(1)
     )
 

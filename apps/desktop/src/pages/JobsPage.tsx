@@ -198,7 +198,15 @@ export function JobsPage() {
             <article className="source-health-card" key={source.source_name}>
               <div>
                 <strong>{sourceNames[source.source_name] ?? source.source_name}</strong>
-                <span className={`source-health-state ${source.last_run_status === 'FAILED' ? 'failed' : 'ok'}`}>
+                <span
+                  className={`source-health-state ${
+                    source.last_run_status === 'FAILED'
+                      ? 'failed'
+                      : source.last_run_status === 'QUARANTINED'
+                        ? 'quarantined'
+                        : 'ok'
+                  }`}
+                >
                   {source.last_run_status ? sourceStateLabels[source.last_run_status] ?? source.last_run_status : '未同步'}
                 </span>
               </div>

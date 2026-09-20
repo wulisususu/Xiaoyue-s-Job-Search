@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import SourceSnapshot, SourceSyncRun
+from ..models import SourceSyncRun
+from ..sources.store import latest_good_snapshot
 from ..sources.sync import SyncResult, sync_due_sources, sync_tencent_source, sync_workfind_bundle
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
@@ -55,12 +56,7 @@ def source_status() -> list[SourceStatusRead]:
                     .order_by(SourceSyncRun.id.desc())
                     .limit(1)
                 )
-                latest_snapshot = session.scalar(
-                    select(SourceSnapshot)
-                    .where(SourceSnapshot.source_name == source_name)
-                    .order_by(SourceSnapshot.id.desc())
-                    .limit(1)
-                )
+                latest_snapshot = latest_good_snapshot(session, source_name)
                 output.append(
                     SourceStatusRead(
                         source_name=source_name,
@@ -68,7 +64,11 @@ def source_status() -> list[SourceStatusRead]:
                         last_run_at=latest_run.finished_at.isoformat() if latest_run else None,
                         last_good_version=latest_snapshot.remote_version if latest_snapshot else None,
                         last_good_hash=latest_snapshot.content_hash if latest_snapshot else None,
-                        last_error=latest_run.error if latest_run and latest_run.status == "FAILED" else None,
+                        last_error=(
+                            latest_run.error
+                            if latest_run and latest_run.status in {"FAILED", "QUARANTINED"}
+                            else None
+                        ),
                     )
                 )
             return output
