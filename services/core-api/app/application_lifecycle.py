@@ -59,6 +59,30 @@ def record_application_created(session: Session, record: ApplicationSession) -> 
     )
 
 
+def record_resume_linked(
+    session: Session,
+    record: ApplicationSession,
+    resume_version_id: str,
+    *,
+    filename: str,
+) -> None:
+    """Bind the resume actually confirmed in the browser and append an audit event.
+
+    This event does not change lifecycle status. The caller owns commit/rollback
+    and should only invoke it after browser-side file read-back has succeeded.
+    """
+    record.resume_version_id = resume_version_id
+    session.add(
+        ApplicationEvent(
+            application_id=record.id,
+            event_type="RESUME_LINKED",
+            from_status=record.status,
+            to_status=record.status,
+            note=f"{resume_version_id} · {filename}",
+        )
+    )
+
+
 def transition_application(
     session: Session,
     record: ApplicationSession,
