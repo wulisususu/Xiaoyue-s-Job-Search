@@ -31,6 +31,11 @@ export interface BrowserFillPlan {
   session_id: string;
   page_url: string;
   page_revision: string;
+  adapter_id: string;
+  adapter_display_name: string;
+  adapter_implementation: string;
+  adapter_capabilities: string[];
+  adapter_limitations: string[];
   items: BrowserFillPlanItem[];
   unmatched: BrowserPlanFieldSummary[];
   blocked: BrowserPlanFieldSummary[];
