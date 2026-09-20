@@ -10,6 +10,7 @@ import {
   getBrowserSemanticPlan,
   startBrowserAgentSession,
   type BrowserAgentSession,
+  type BrowserFillFieldResult,
   type BrowserFillPlan,
 } from '../api/browserAgentClient';
 
@@ -30,6 +31,7 @@ export function ApplicationsPage() {
   const [sessions, setSessions] = useState<BrowserAgentSession[]>([]);
   const [plans, setPlans] = useState<Record<number, BrowserFillPlan>>({});
   const [approved, setApproved] = useState<Record<number, string[]>>({});
+  const [fillResults, setFillResults] = useState<Record<number, BrowserFillFieldResult[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -80,6 +82,7 @@ export function ApplicationsPage() {
 
   function storePlan(applicationId: number, plan: BrowserFillPlan) {
     setPlans((current) => ({ ...current, [applicationId]: plan }));
+    setFillResults((current) => ({ ...current, [applicationId]: [] }));
     setApproved((current) => ({
       ...current,
       [applicationId]: plan.items.filter((item) => !item.requires_confirmation).map((item) => item.field_id),
@@ -174,7 +177,10 @@ export function ApplicationsPage() {
     try {
       const fieldIds = approved[applicationId] ?? [];
       const result = await fillBrowserAgentPlan(session.id, plan.token, fieldIds);
-      setMessage(`已填写 ${result.filled_count} 项，跳过 ${result.skipped_count} 项。请在浏览器中逐项检查，提交仍需你本人确认。`);
+      setFillResults((current) => ({ ...current, [applicationId]: result.results }));
+      setMessage(
+        `写入尝试 ${result.filled_count} 项；回读验证成功 ${result.verified_count} 项，失败 ${result.failed_count} 项，需要检查 ${result.uncertain_count} 项，跳过 ${result.skipped_count} 项。最终提交仍需你本人确认。`,
+      );
       const rows = await getApplications();
       setApplications(rows);
     } catch (reason: unknown) {
@@ -192,6 +198,11 @@ export function ApplicationsPage() {
       await closeBrowserAgentSession(session.id);
       setSessions((current) => current.filter((item) => item.id !== session.id));
       setPlans((current) => {
+        const next = { ...current };
+        delete next[applicationId];
+        return next;
+      });
+      setFillResults((current) => {
         const next = { ...current };
         delete next[applicationId];
         return next;
@@ -230,6 +241,9 @@ export function ApplicationsPage() {
             const agentSession = sessionsByApplication.get(application.id);
             const plan = plans[application.id];
             const selected = new Set(approved[application.id] ?? []);
+            const fieldResultsById = new Map(
+              (fillResults[application.id] ?? []).map((result) => [result.field_id, result]),
+            );
             const isAgent = application.channel === 'browser_agent';
             return (
               <article className="job-card application-card" key={application.id}>
@@ -294,22 +308,34 @@ export function ApplicationsPage() {
                             只会填写你勾选的字段；密码、附件、提交控件会被阻断。Browser Agent <strong>不会点击提交按钮</strong>。
                           </div>
                           <div className="agent-plan-list">
-                            {plan.items.map((item) => (
-                              <label className={`agent-plan-row ${item.requires_confirmation ? 'needs-review' : ''}`} key={item.field_id}>
-                                <input
-                                  aria-label={`${item.label} ${item.source_path}`}
-                                  type="checkbox"
-                                  checked={selected.has(item.field_id)}
-                                  onChange={() => toggleApproved(application.id, item.field_id)}
-                                />
-                                <span className="agent-plan-copy">
-                                  <strong>{item.label}</strong>
-                                  <small><code>{item.source_path}</code> · 置信度 {Math.round(item.confidence * 100)}%</small>
-                                </span>
-                                <span className="agent-value">{formatAgentValue(item.value)}</span>
-                                {item.requires_confirmation && <span className="soft-badge warning">需确认</span>}
-                              </label>
-                            ))}
+                            {plan.items.map((item) => {
+                              const fieldResult = fieldResultsById.get(item.field_id);
+                              return (
+                                <label className={`agent-plan-row ${item.requires_confirmation ? 'needs-review' : ''}`} key={item.field_id}>
+                                  <input
+                                    aria-label={`${item.label} ${item.source_path}`}
+                                    type="checkbox"
+                                    checked={selected.has(item.field_id)}
+                                    onChange={() => toggleApproved(application.id, item.field_id)}
+                                  />
+                                  <span className="agent-plan-copy">
+                                    <strong>{item.label}</strong>
+                                    <small>
+                                      <code>{item.source_path}</code> · 置信度 {Math.round(item.confidence * 100)}%
+                                      {fieldResult && <> · 回读：{formatAgentValue(fieldResult.observed)}</>}
+                                    </small>
+                                  </span>
+                                  <span className="agent-value">{formatAgentValue(item.value)}</span>
+                                  {fieldResult ? (
+                                    <span className={`soft-badge ${fillResultBadgeClass(fieldResult.status)}`}>
+                                      {fillResultLabel(fieldResult.status)}
+                                    </span>
+                                  ) : item.requires_confirmation ? (
+                                    <span className="soft-badge warning">需确认</span>
+                                  ) : null}
+                                </label>
+                              );
+                            })}
                           </div>
 
                           {plan.unmatched.length > 0 && (
@@ -373,4 +399,16 @@ function formatTime(value: string | null) {
   if (!value) return '未知';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
+}
+
+
+function fillResultLabel(status: BrowserFillFieldResult['status']): string {
+  if (status === 'VERIFIED') return '回读成功';
+  if (status === 'FAILED') return '填写失败';
+  if (status === 'UNCERTAIN') return '需检查';
+  return '已跳过';
+}
+
+function fillResultBadgeClass(status: BrowserFillFieldResult['status']): string {
+  return status === 'VERIFIED' ? 'verified' : 'warning';
 }
