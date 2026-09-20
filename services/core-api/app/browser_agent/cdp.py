@@ -171,6 +171,7 @@ _SCAN_SCRIPT = r"""
       input_type: 'radio_group',
       label: formLabelFor(root) || formLabelFor(members[0]),
       name: members[0].getAttribute('name') || '',
+      dom_id: root.getAttribute('id') || members[0].getAttribute('id') || '',
       placeholder: '',
       aria_label: root.getAttribute('aria-label') || '',
       section: sectionFor(root),
@@ -214,6 +215,7 @@ _SCAN_SCRIPT = r"""
         input_type: 'combobox',
         label: formLabelFor(comboRoot) || formLabelFor(inner),
         name: (inner && inner.getAttribute('name')) || comboRoot.getAttribute('name') || '',
+        dom_id: (inner && inner.getAttribute('id')) || comboRoot.getAttribute('id') || '',
         placeholder: (inner && inner.getAttribute('placeholder')) || '',
         aria_label: (inner && inner.getAttribute('aria-label')) || comboRoot.getAttribute('aria-label') || '',
         section: sectionFor(comboRoot),
@@ -243,6 +245,7 @@ _SCAN_SCRIPT = r"""
         input_type: 'date_picker',
         label: formLabelFor(dateRoot) || formLabelFor(el),
         name: el.getAttribute('name') || '',
+        dom_id: el.getAttribute('id') || '',
         placeholder: el.getAttribute('placeholder') || '',
         aria_label: el.getAttribute('aria-label') || '',
         section: sectionFor(dateRoot),
@@ -266,6 +269,7 @@ _SCAN_SCRIPT = r"""
       input_type: nativeType,
       label: formLabelFor(el),
       name: el.getAttribute('name') || '',
+      dom_id: el.getAttribute('id') || '',
       placeholder: el.getAttribute('placeholder') || '',
       aria_label: el.getAttribute('aria-label') || '',
       section: sectionFor(el),
@@ -441,6 +445,7 @@ class EdgeBrowserBackend:
                     label=str(raw.get("label", "")),
                     name=str(raw.get("name", "")),
                     placeholder=str(raw.get("placeholder", "")),
+                    dom_id=str(raw.get("dom_id", "")),
                     aria_label=str(raw.get("aria_label", "")),
                     section=str(raw.get("section", "")),
                     required=bool(raw.get("required", False)),
@@ -455,6 +460,79 @@ class EdgeBrowserBackend:
             fields=fields,
             target_id=handle.target_id,
         )
+
+    def upload_file(self, handle: EdgeHandle, field_id: str, file_path: Path) -> dict[str, Any]:
+        resolved = file_path.resolve()
+        if not resolved.is_file():
+            raise BrowserControlError("待上传简历文件不存在")
+
+        encoded_field_id = json.dumps(field_id)
+        ws_url = self._page_websocket(handle)
+        result = self._call_ws(
+            ws_url,
+            "Runtime.evaluate",
+            {
+                "expression": (
+                    "(() => {"
+                    "const id=" + encoded_field_id + ";"
+                    "const el=Array.from(document.querySelectorAll('[data-xiaoyue-agent-id]'))"
+                    ".find((node)=>node.dataset.xiaoyueAgentId===id"
+                    "&& node.tagName==='INPUT' && (node.getAttribute('type')||'').toLowerCase()==='file');"
+                    "return el || null;"
+                    "})()"
+                ),
+                "returnByValue": False,
+                "awaitPromise": True,
+                "userGesture": True,
+            },
+        )
+        if result.get("exceptionDetails"):
+            raise BrowserControlError("定位简历上传控件失败")
+        remote = result.get("result") or {}
+        object_id = remote.get("objectId")
+        if not isinstance(object_id, str) or not object_id:
+            raise BrowserControlError("未找到受控简历上传控件")
+
+        try:
+            self._call_ws(ws_url, "DOM.enable")
+            self._call_ws(
+                ws_url,
+                "DOM.setFileInputFiles",
+                {
+                    "files": [str(resolved)],
+                    "objectId": object_id,
+                },
+            )
+        finally:
+            try:
+                self._call_ws(ws_url, "Runtime.releaseObject", {"objectId": object_id})
+            except Exception:
+                pass
+
+        observed = self._evaluate(
+            handle,
+            (
+                "(() => {"
+                "const id=" + encoded_field_id + ";"
+                "const el=Array.from(document.querySelectorAll('[data-xiaoyue-agent-id]'))"
+                ".find((node)=>node.dataset.xiaoyueAgentId===id"
+                "&& node.tagName==='INPUT' && (node.getAttribute('type')||'').toLowerCase()==='file');"
+                "if(!el || !el.files || el.files.length!==1) return null;"
+                "const file=el.files[0];"
+                "return {filename:file.name,size:file.size,type:file.type};"
+                "})()"
+            ),
+        )
+        if not isinstance(observed, dict):
+            raise BrowserControlError("浏览器未确认简历文件已写入上传控件")
+        filename = observed.get("filename")
+        if filename != resolved.name:
+            raise BrowserControlError("浏览器回读的简历文件名与所选版本不一致")
+        return {
+            "filename": str(filename),
+            "size": int(observed.get("size", 0) or 0),
+            "type": str(observed.get("type", "") or ""),
+        }
 
     def fill(self, handle: EdgeHandle, values: dict[str, Any]) -> dict[str, Any]:
         encoded = json.dumps(values, ensure_ascii=False)

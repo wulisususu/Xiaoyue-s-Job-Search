@@ -87,3 +87,72 @@ def test_cdp_fill_script_performs_post_write_readback_and_validation_checks(monk
     assert "PAGE_VALIDATION_ERROR" in script
     assert "aria-invalid" in script
     assert "await sleep(180)" in script
+
+
+def test_cdp_resume_upload_targets_exact_file_input_and_verifies_filename(tmp_path, monkeypatch):
+    backend = EdgeBrowserBackend()
+    resume = tmp_path / "赵新悦-央企简历.pdf"
+    resume.write_bytes(b"%PDF-test")
+
+    calls: list[tuple[str, dict | None]] = []
+
+    monkeypatch.setattr(backend, "_page_websocket", lambda handle: "ws://fake")
+    def fake_call(ws_url, method, params=None):
+        calls.append((method, params))
+        if method == "Runtime.evaluate":
+            return {"result": {"objectId": "file-input-object"}}
+        return {}
+    monkeypatch.setattr(backend, "_call_ws", fake_call)
+    monkeypatch.setattr(
+        backend,
+        "_evaluate",
+        lambda handle, expression: {
+            "filename": resume.name,
+            "size": resume.stat().st_size,
+            "type": "application/pdf",
+        },
+    )
+
+    result = backend.upload_file(object(), "resume-file", resume)
+
+    assert result["filename"] == resume.name
+    set_file_calls = [params for method, params in calls if method == "DOM.setFileInputFiles"]
+    assert set_file_calls == [
+        {
+            "files": [str(resume.resolve())],
+            "objectId": "file-input-object",
+        }
+    ]
+    assert all(method != "Runtime.callFunctionOn" for method, _ in calls)
+
+
+def test_cdp_resume_upload_fails_when_browser_readback_filename_differs(tmp_path, monkeypatch):
+    from app.browser_agent.cdp import BrowserControlError
+    import pytest
+
+    backend = EdgeBrowserBackend()
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-test")
+
+    monkeypatch.setattr(backend, "_page_websocket", lambda handle: "ws://fake")
+    monkeypatch.setattr(
+        backend,
+        "_call_ws",
+        lambda ws_url, method, params=None: (
+            {"result": {"objectId": "file-input-object"}}
+            if method == "Runtime.evaluate"
+            else {}
+        ),
+    )
+    monkeypatch.setattr(
+        backend,
+        "_evaluate",
+        lambda handle, expression: {
+            "filename": "different.pdf",
+            "size": 10,
+            "type": "application/pdf",
+        },
+    )
+
+    with pytest.raises(BrowserControlError, match="文件名"):
+        backend.upload_file(object(), "resume-file", resume)
