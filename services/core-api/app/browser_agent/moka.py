@@ -35,7 +35,6 @@ _COLLECTION_FIELDS: dict[str, tuple[str, dict[str, str]]] = {
         {
             "company": "organization",
             "title": "role",
-            "location": "location",
             "startDate": "start_date",
             "endDate": "end_date",
             "summary": "bullets",
@@ -59,13 +58,6 @@ _COLLECTION_FIELDS: dict[str, tuple[str, dict[str, str]]] = {
             "level": "level",
         },
     ),
-    "awardInfo": (
-        "award",
-        {
-            "awardName": "name",
-            "awardDate": "date",
-        },
-    ),
 }
 
 _KNOWN_MODULES = {
@@ -75,7 +67,6 @@ _KNOWN_MODULES = {
     "projectInfo",
     "practiceInfo",
     "languageInfo",
-    "awardInfo",
     "jobIntention",
     "selfDescription",
     "customFields",
