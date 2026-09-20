@@ -24,6 +24,9 @@ class FormFieldDescriptor:
     options: list[str]
     disabled: bool = False
     readonly: bool = False
+    dom_id: str = ""
+    adapter_source_path: str = ""
+    adapter_action: str = ""
 
 
 @dataclass(slots=True)
@@ -47,6 +50,14 @@ class FillPlanItem:
 
 
 @dataclass(slots=True)
+class AttachmentPlanItem:
+    field_id: str
+    label: str
+    kind: str
+    required: bool
+
+
+@dataclass(slots=True)
 class PlanFieldSummary:
     field_id: str
     label: str
@@ -59,7 +70,13 @@ class FillPlan:
     session_id: str
     page_url: str
     page_revision: str = ""
+    adapter_id: str = "generic"
+    adapter_display_name: str = "通用招聘表单"
+    adapter_implementation: str = "generic_dom"
+    adapter_capabilities: list[str] = field(default_factory=list)
+    adapter_limitations: list[str] = field(default_factory=list)
     items: list[FillPlanItem] = field(default_factory=list)
+    attachments: list[AttachmentPlanItem] = field(default_factory=list)
     unmatched: list[PlanFieldSummary] = field(default_factory=list)
     blocked: list[PlanFieldSummary] = field(default_factory=list)
 

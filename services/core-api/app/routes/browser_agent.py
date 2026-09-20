@@ -17,6 +17,7 @@ from ..browser_agent.manager import (
     get_browser_agent_manager,
 )
 from ..browser_agent.models import (
+    AttachmentPlanItem,
     BrowserAgentSessionInfo,
     FillPlan,
     FillPlanItem,
@@ -55,6 +56,13 @@ class FillPlanItemRead(BaseModel):
     requires_confirmation: bool
 
 
+class AttachmentPlanItemRead(BaseModel):
+    field_id: str
+    label: str
+    kind: str
+    required: bool
+
+
 class PlanFieldSummaryRead(BaseModel):
     field_id: str
     label: str
@@ -66,7 +74,13 @@ class FillPlanRead(BaseModel):
     session_id: str
     page_url: str
     page_revision: str
+    adapter_id: str
+    adapter_display_name: str
+    adapter_implementation: str
+    adapter_capabilities: list[str]
+    adapter_limitations: list[str]
     items: list[FillPlanItemRead]
+    attachments: list[AttachmentPlanItemRead]
     unmatched: list[PlanFieldSummaryRead]
     blocked: list[PlanFieldSummaryRead]
 
@@ -78,6 +92,19 @@ class SemanticPlanRequest(BaseModel):
 class FillRequest(BaseModel):
     plan_token: str = Field(min_length=1)
     field_ids: list[str]
+
+
+class ResumeUploadRequest(BaseModel):
+    plan_token: str = Field(min_length=1)
+    field_id: str = Field(min_length=1)
+    resume_version_id: str = Field(min_length=1)
+
+
+class ResumeUploadRead(BaseModel):
+    field_id: str
+    resume_version_id: str
+    filename: str
+    status: str
 
 
 class FillFieldResultRead(BaseModel):
@@ -120,6 +147,11 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
         session_id=plan.session_id,
         page_url=plan.page_url,
         page_revision=plan.page_revision,
+        adapter_id=plan.adapter_id,
+        adapter_display_name=plan.adapter_display_name,
+        adapter_implementation=plan.adapter_implementation,
+        adapter_capabilities=list(plan.adapter_capabilities),
+        adapter_limitations=list(plan.adapter_limitations),
         items=[
             FillPlanItemRead(
                 **{
@@ -136,6 +168,7 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
             )
             for item in plan.items
         ],
+        attachments=[AttachmentPlanItemRead(**asdict(item)) for item in plan.attachments],
         unmatched=[PlanFieldSummaryRead(**asdict(item)) for item in plan.unmatched],
         blocked=[PlanFieldSummaryRead(**asdict(item)) for item in plan.blocked],
     )
@@ -278,6 +311,26 @@ def fill_browser_agent_plan(session_id: str, body: FillRequest) -> FillResultRea
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BrowserControlError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/resume-upload", response_model=ResumeUploadRead)
+def upload_browser_agent_resume(session_id: str, body: ResumeUploadRequest) -> ResumeUploadRead:
+    try:
+        result = get_browser_agent_manager().upload_resume(
+            session_id,
+            body.plan_token,
+            body.field_id,
+            body.resume_version_id,
+        )
+        return ResumeUploadRead(**result)
+    except BrowserAgentSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BrowserAgentConflictError, BrowserAgentPlanError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BrowserControlError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/sessions/{session_id}/verify", response_model=BrowserVerificationRead)

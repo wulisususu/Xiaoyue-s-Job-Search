@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.browser_agent.models import BrowserAgentSessionInfo, FillPlan, FillPlanItem, FormFieldDescriptor
+from app.browser_agent.models import (
+    AttachmentPlanItem,
+    BrowserAgentSessionInfo,
+    FillPlan,
+    FillPlanItem,
+    FormFieldDescriptor,
+)
 from app.config import get_settings
 from app.db import get_engine
 from app.models import ApplicationSession, Company, Job
@@ -42,6 +48,14 @@ class FakeBrowserAgentManager:
                     source_path="identity.name", confidence=0.99, reason="姓名", requires_confirmation=False,
                 )
             ],
+            attachments=[
+                AttachmentPlanItem(
+                    field_id="resume-file",
+                    label="上传简历",
+                    kind="resume",
+                    required=True,
+                )
+            ],
             unmatched=[],
             blocked=[],
         )
@@ -73,6 +87,14 @@ class FakeBrowserAgentManager:
                 }
                 for field_id in field_ids
             ],
+            "status": "VERIFIED",
+        }
+
+    def upload_resume(self, session_id: str, plan_token: str, field_id: str, resume_version_id: str):
+        return {
+            "field_id": field_id,
+            "resume_version_id": resume_version_id,
+            "filename": "resume.pdf",
             "status": "VERIFIED",
         }
 
@@ -133,6 +155,14 @@ def test_browser_agent_api_exposes_plan_then_fills_only_approved_plan_fields(cli
     payload = plan.json()
     assert payload["items"][0]["source_path"] == "identity.name"
     assert payload["items"][0]["value"] == "赵新悦"
+    assert payload["attachments"] == [
+        {
+            "field_id": "resume-file",
+            "label": "上传简历",
+            "kind": "resume",
+            "required": True,
+        }
+    ]
 
     semantic = client.post(
         "/api/browser-agent/sessions/agent-1/semantic-plan",
@@ -206,3 +236,28 @@ def test_browser_agent_api_allows_verify_mode_before_verified_open(client, monke
     assert confirmed.status_code == 200
     assert confirmed.json()["verified"] is True
     assert confirmed.json()["job_status"] == "VERIFIED_OPEN"
+
+
+def test_browser_agent_api_uploads_only_explicit_resume_candidate(client, monkeypatch):
+    application_id = seed_application()
+    manager = FakeBrowserAgentManager()
+    monkeypatch.setattr(browser_routes, "get_browser_agent_manager", lambda: manager)
+
+    started = client.post("/api/browser-agent/sessions", json={"application_id": application_id})
+    assert started.status_code == 200
+
+    uploaded = client.post(
+        "/api/browser-agent/sessions/agent-1/resume-upload",
+        json={
+            "plan_token": "plan-1",
+            "field_id": "resume-file",
+            "resume_version_id": "resume-v2",
+        },
+    )
+    assert uploaded.status_code == 200
+    assert uploaded.json() == {
+        "field_id": "resume-file",
+        "resume_version_id": "resume-v2",
+        "filename": "resume.pdf",
+        "status": "VERIFIED",
+    }

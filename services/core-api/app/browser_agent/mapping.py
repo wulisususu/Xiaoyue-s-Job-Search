@@ -7,6 +7,7 @@ from typing import Any
 
 from ..profile.registry import get_field_definition
 from .models import (
+    AttachmentPlanItem,
     ConfirmedProfileSnapshot,
     FillPlan,
     FillPlanItem,
@@ -254,20 +255,83 @@ def build_fill_plan(
     session_id: str = "",
     token: str | None = None,
     page_revision: str = "",
+    adapter_id: str = "generic",
+    adapter_display_name: str = "通用招聘表单",
+    adapter_implementation: str = "generic_dom",
+    adapter_capabilities: list[str] | None = None,
+    adapter_limitations: list[str] | None = None,
 ) -> FillPlan:
     plan = FillPlan(
         token=token or uuid.uuid4().hex,
         session_id=session_id,
         page_url=scan.url,
         page_revision=page_revision,
+        adapter_id=adapter_id,
+        adapter_display_name=adapter_display_name,
+        adapter_implementation=adapter_implementation,
+        adapter_capabilities=list(adapter_capabilities or []),
+        adapter_limitations=list(adapter_limitations or []),
     )
 
     collection_offsets: dict[tuple[str, str], int] = {}
 
     for field in scan.fields:
         input_type = (field.input_type or field.tag or "text").lower()
+
+        if input_type == "file":
+            if not field.disabled and field.adapter_action == "resume_upload":
+                plan.attachments.append(
+                    AttachmentPlanItem(
+                        field_id=field.field_id,
+                        label=field.label or field.aria_label or field.name or "简历",
+                        kind="resume",
+                        required=field.required,
+                    )
+                )
+            else:
+                plan.blocked.append(_summary(field))
+            continue
+
         if field.disabled or field.readonly or input_type in _BLOCKED_TYPES:
             plan.blocked.append(_summary(field))
+            continue
+
+        if field.adapter_source_path:
+            source_path = field.adapter_source_path
+            value = _source_value(snapshot, source_path)
+            if value is None:
+                plan.unmatched.append(_summary(field))
+                continue
+
+            normalized_value = normalize_value_for_control(source_path, value, field)
+            if normalized_value is None:
+                plan.unmatched.append(_summary(field))
+                continue
+
+            source_sensitive = False
+            if not source_path.startswith("collections."):
+                try:
+                    source_sensitive = get_field_definition(source_path).sensitive
+                except KeyError:
+                    source_sensitive = False
+
+            control_needs_confirmation = (
+                field.tag.lower() == "select"
+                or input_type in {"radio", "radio_group", "combobox", "date_picker"}
+                or source_sensitive
+            )
+            plan.items.append(
+                FillPlanItem(
+                    field_id=field.field_id,
+                    label=field.label or field.aria_label or field.placeholder or field.name or field.field_id,
+                    control_type=input_type,
+                    value=normalized_value,
+                    source_path=source_path,
+                    confidence=1.0,
+                    reason=f"{adapter_display_name} native field path",
+                    requires_confirmation=control_needs_confirmation,
+                )
+            )
             continue
 
         candidates: list[tuple[float, str, str, Any, tuple[str, str] | None]] = []
