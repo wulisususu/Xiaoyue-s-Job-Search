@@ -254,12 +254,22 @@ def build_fill_plan(
     session_id: str = "",
     token: str | None = None,
     page_revision: str = "",
+    adapter_id: str = "generic",
+    adapter_display_name: str = "通用招聘表单",
+    adapter_implementation: str = "generic_dom",
+    adapter_capabilities: list[str] | None = None,
+    adapter_limitations: list[str] | None = None,
 ) -> FillPlan:
     plan = FillPlan(
         token=token or uuid.uuid4().hex,
         session_id=session_id,
         page_url=scan.url,
         page_revision=page_revision,
+        adapter_id=adapter_id,
+        adapter_display_name=adapter_display_name,
+        adapter_implementation=adapter_implementation,
+        adapter_capabilities=list(adapter_capabilities or []),
+        adapter_limitations=list(adapter_limitations or []),
     )
 
     collection_offsets: dict[tuple[str, str], int] = {}
