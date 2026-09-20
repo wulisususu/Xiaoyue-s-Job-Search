@@ -39,6 +39,7 @@ class BrowserAgentSessionRead(BaseModel):
     url: str
     status: str
     browser: str
+    mode: str
 
 
 class FillPlanItemRead(BaseModel):
@@ -62,6 +63,7 @@ class FillPlanRead(BaseModel):
     token: str
     session_id: str
     page_url: str
+    page_revision: str
     items: list[FillPlanItemRead]
     unmatched: list[PlanFieldSummaryRead]
     blocked: list[PlanFieldSummaryRead]
@@ -95,6 +97,7 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
         token=plan.token,
         session_id=plan.session_id,
         page_url=plan.page_url,
+        page_revision=plan.page_revision,
         items=[
             FillPlanItemRead(
                 **{
