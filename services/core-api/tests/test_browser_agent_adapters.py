@@ -14,9 +14,21 @@ def test_moka_is_promoted_to_dedicated_path_aware_adapter():
     assert "auto_submit" in adapter.limitations
 
 
+def test_beisen_is_promoted_to_dedicated_path_aware_adapter():
+    adapter = select_browser_adapter("https://career.beisen.com/apply/123")
+    assert adapter.id == "beisen"
+    assert adapter.display_name == "北森"
+    assert adapter.implementation == "beisen_dom_v1"
+    assert "beisen_standard_resume_paths" in adapter.capabilities
+    assert "indexed_repeatable_mapping" in adapter.capabilities
+    assert "file_upload" in adapter.limitations
+    assert "internship_experience_disambiguation" in adapter.limitations
+    assert "high_risk_declarations" in adapter.limitations
+    assert "auto_submit" in adapter.limitations
+
+
 def test_other_known_ats_hosts_remain_honest_generic_dom_adapters():
     cases = {
-        "https://career.beisen.com/apply/123": ("beisen", "北森"),
         "https://jobs.feishu.cn/apply/123": ("feishu", "飞书招聘"),
         "https://company.hotjob.cn/wt/apply": ("hotjob", "Hotjob"),
     }
