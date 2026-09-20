@@ -293,6 +293,7 @@ def apply_semantic_suggestions(
         adapter_capabilities=list(plan.adapter_capabilities),
         adapter_limitations=list(plan.adapter_limitations),
         items=[*plan.items, *additions],
+        attachments=list(plan.attachments),
         unmatched=[item for item in plan.unmatched if item.field_id not in accepted_ids],
         blocked=list(plan.blocked),
     )
