@@ -60,9 +60,10 @@ _ADAPTERS: dict[str, BrowserATSAdapter] = {
             *_GENERIC_CAPABILITIES,
             "moka_native_field_paths",
             "indexed_repeatable_mapping",
+            "resume_upload",
         ),
         limitations=(
-            "file_upload",
+            "additional_attachments",
             "cascading_select",
             "repeatable_sections_without_native_paths",
             "practice_experience_disambiguation",
