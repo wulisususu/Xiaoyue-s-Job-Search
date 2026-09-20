@@ -307,7 +307,7 @@ export function ApplicationsPage() {
                           <div className="agent-safety-note">
                             <strong>{plan.adapter_display_name}</strong>
                             {' · '}
-                            {plan.adapter_implementation === 'generic_dom' ? '通用 DOM 兼容层' : plan.adapter_implementation}
+                            {adapterImplementationLabel(plan.adapter_implementation)}
                             {' · '}
                             只会填写你勾选的字段；密码、附件、提交控件会被阻断。Browser Agent <strong>不会点击提交按钮</strong>。
                             {plan.adapter_limitations.length > 0 && (
@@ -428,9 +428,19 @@ function adapterLimitationLabel(value: string): string {
     file_upload: '附件上传',
     cascading_select: '级联选择',
     repeatable_sections: '重复经历区块',
+    repeatable_sections_without_native_paths: '无原生路径的重复经历区块',
+    practice_experience_disambiguation: '实习/工作经历归类',
+    moka_custom_fields: 'Moka 自定义字段',
     iframe_forms: 'iframe 表单',
     multi_step_navigation: '多步骤自动导航',
     auto_submit: '自动提交',
   };
   return labels[value] ?? value;
+}
+
+
+function adapterImplementationLabel(value: string): string {
+  if (value === 'generic_dom') return '通用 DOM 兼容层';
+  if (value === 'moka_dom_v1') return 'Moka 专项 DOM v1';
+  return value;
 }
