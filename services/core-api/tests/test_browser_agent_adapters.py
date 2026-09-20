@@ -8,7 +8,8 @@ def test_moka_is_promoted_to_dedicated_path_aware_adapter():
     assert adapter.implementation == "moka_dom_v1"
     assert "moka_native_field_paths" in adapter.capabilities
     assert "indexed_repeatable_mapping" in adapter.capabilities
-    assert "file_upload" in adapter.limitations
+    assert "resume_upload" in adapter.capabilities
+    assert "additional_attachments" in adapter.limitations
     assert "moka_custom_fields" in adapter.limitations
     assert "auto_submit" in adapter.limitations
 
