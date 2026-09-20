@@ -35,7 +35,7 @@ def test_fresh_db_is_built_by_migration_chain_and_is_idempotent(tmp_path):
             "profile_field_revisions", "profile_draft_fields",
             "profile_collection_items", "profile_collection_revisions",
             "ai_extraction_runs",
-            "application_sessions", "url_candidates", "alembic_version",
+            "application_sessions", "application_events", "url_candidates", "alembic_version",
         ):
             assert expected in tables, f"missing table {expected}"
     finally:
@@ -104,6 +104,7 @@ def test_first_revision_db_upgrades_to_head(tmp_path):
         tables = set(inspect(engine).get_table_names())
         assert {"record_hash", "status"} <= job_source_columns
         assert "application_sessions" in tables
+        assert "application_events" in tables
         assert "url_candidates" in tables
         assert "profile_collection_items" in tables
         assert "profile_collection_revisions" in tables
@@ -263,5 +264,43 @@ def test_0009_db_upgrades_to_0010_with_profile_secret_reference(tmp_path):
     try:
         columns = {c["name"] for c in inspect(engine).get_columns("profile_fields")}
         assert "secret_ref" in columns
+    finally:
+        engine.dispose()
+
+
+def test_0010_db_upgrades_to_0011_application_crm_events(tmp_path):
+    settings = _settings(tmp_path)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    command.upgrade(_alembic_config(settings), "0010_profile_sensitive_fields")
+
+    engine = create_engine(f"sqlite:///{settings.database_path}")
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert "application_sessions" in tables
+        assert "application_events" not in tables
+        columns = {c["name"] for c in inspect(engine).get_columns("application_sessions")}
+        assert "resume_version_id" not in columns
+    finally:
+        engine.dispose()
+
+    init_db(settings)
+
+    engine = get_engine(settings)
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        assert "application_events" in tables
+        session_columns = {c["name"] for c in inspector.get_columns("application_sessions")}
+        assert "resume_version_id" in session_columns
+        event_columns = {c["name"] for c in inspector.get_columns("application_events")}
+        assert {
+            "id",
+            "application_id",
+            "event_type",
+            "from_status",
+            "to_status",
+            "note",
+            "created_at",
+        } <= event_columns
     finally:
         engine.dispose()

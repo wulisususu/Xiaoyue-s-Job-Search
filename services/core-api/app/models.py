@@ -130,11 +130,11 @@ class SourceSyncRun(Base):
 
 
 class ApplicationSession(Base):
-    """One user-driven application attempt for a job.
+    """One application attempt for a job.
 
-    channel='manual' is the pre-Browser-Agent flow: the user clicks 开始申请,
-    we open the verified entry URL and track the timeline by hand. The future
-    Browser Agent writes the same table with channel='browser_agent'.
+    A non-terminal attempt is reused on repeated clicks for the same
+    job+channel. Every lifecycle change is recorded in application_events so
+    the current status is a projection, not the only copy of history.
     """
 
     __tablename__ = "application_sessions"
@@ -142,9 +142,31 @@ class ApplicationSession(Base):
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="OPENED", index=True)
     channel: Mapped[str] = mapped_column(String(40), nullable=False, default="manual", index=True)
+    resume_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("resume_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     opened_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
     opened_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ApplicationEvent(Base):
+    """Immutable lifecycle audit event for an application attempt."""
+
+    __tablename__ = "application_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey("application_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    from_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
 
 
 class UrlCandidate(Base):
