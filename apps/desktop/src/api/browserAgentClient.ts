@@ -36,9 +36,21 @@ export interface BrowserFillPlan {
   blocked: BrowserPlanFieldSummary[];
 }
 
+export interface BrowserFillFieldResult {
+  field_id: string;
+  requested: unknown;
+  observed: unknown | null;
+  status: 'VERIFIED' | 'FAILED' | 'UNCERTAIN' | 'SKIPPED';
+  reason: string;
+}
+
 export interface BrowserFillResult {
   filled_count: number;
   skipped_count: number;
+  verified_count: number;
+  failed_count: number;
+  uncertain_count: number;
+  results: BrowserFillFieldResult[];
   status: string;
 }
 
