@@ -286,6 +286,7 @@ def apply_semantic_suggestions(
         token=uuid.uuid4().hex,
         session_id=plan.session_id,
         page_url=plan.page_url,
+        page_revision=plan.page_revision,
         items=[*plan.items, *additions],
         unmatched=[item for item in plan.unmatched if item.field_id not in accepted_ids],
         blocked=list(plan.blocked),
