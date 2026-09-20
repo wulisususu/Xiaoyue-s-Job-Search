@@ -70,6 +70,7 @@ def test_registry_exposes_recruitment_identity_fields_and_marks_document_number_
     }
     assert expected.issubset(FIELD_REGISTRY)
     assert get_field_definition("identity.id_number").sensitive is True
+    assert get_field_definition("identity.political_status").sensitive is True
     assert get_field_definition("identity.birth_date").sensitive is False
 
     assert validate_profile_value("identity.birth_date", "2004-01-02") == "2004-01-02"

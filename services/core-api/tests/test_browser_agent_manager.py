@@ -21,6 +21,9 @@ class FakeEdgeBackend:
         self.closed = False
         self.current_url = "https://ats.example.com/apply/form"
         self.name_input_type = "text"
+        self.name_label = "姓名"
+        self.title = "申请表"
+        self.fill_outcome = "VERIFIED"
 
     def start(self, url: str, profile_dir: Path):
         self.started = (url, profile_dir)
@@ -29,13 +32,13 @@ class FakeEdgeBackend:
     def scan(self, handle):
         return FormScan(
             url=self.current_url,
-            title="申请表",
+            title=self.title,
             fields=[
                 FormFieldDescriptor(
                     field_id="name",
                     tag="input",
                     input_type=self.name_input_type,
-                    label="姓名",
+                    label=self.name_label,
                     name="realName",
                     placeholder="",
                     aria_label="",
@@ -56,17 +59,47 @@ class FakeEdgeBackend:
                     options=[],
                 ),
             ],
+            target_id="target-1",
         )
 
     def fill(self, handle, values):
         self.filled = values
-        return {"filled_count": len(values), "skipped_count": 0}
+        results = []
+        for field_id, value in values.items():
+            if self.fill_outcome == "FAILED":
+                results.append(
+                    {
+                        "field_id": field_id,
+                        "requested": value,
+                        "observed": "",
+                        "status": "FAILED",
+                        "reason": "VALUE_REVERTED",
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "field_id": field_id,
+                        "requested": value,
+                        "observed": value,
+                        "status": "VERIFIED",
+                        "reason": "READBACK_MATCH",
+                    }
+                )
+        return {
+            "filled_count": len(values),
+            "skipped_count": 0,
+            "verified_count": len(values) if self.fill_outcome == "VERIFIED" else 0,
+            "failed_count": len(values) if self.fill_outcome == "FAILED" else 0,
+            "uncertain_count": 0,
+            "results": results,
+        }
 
     def close(self, handle):
         self.closed = True
 
 
-def _seed_application_and_profile() -> int:
+def _seed_application_and_profile(*, job_status: str = "VERIFIED_OPEN") -> int:
     engine = get_engine(get_settings())
     try:
         with Session(engine) as session:
@@ -83,7 +116,7 @@ def _seed_application_and_profile() -> int:
                 deadline_text="招满即止",
                 apply_url="https://ats.example.com/apply",
                 canonical_url="https://ats.example.com/apply",
-                status="VERIFIED_OPEN",
+                status=job_status,
                 fingerprint="fp-agent-manager",
             )
             session.add(job)
@@ -141,7 +174,24 @@ def test_real_manager_uses_confirmed_ssot_blocks_sensitive_fields_and_updates_cr
     assert all(item.value != "unconfirmed@example.com" for item in plan.items)
 
     result = manager.fill(info.id, plan.token, ["name"])
-    assert result == {"filled_count": 1, "skipped_count": 0, "status": "FILLED"}
+    assert result == {
+        "filled_count": 1,
+        "skipped_count": 0,
+        "verified_count": 1,
+        "failed_count": 0,
+        "uncertain_count": 0,
+        "results": [
+            {
+                "field_id": "name",
+                "requested": "赵新悦",
+                "observed": "赵新悦",
+                "status": "VERIFIED",
+                "reason": "READBACK_MATCH",
+                "source_path": "identity.name",
+            }
+        ],
+        "status": "VERIFIED",
+    }
     assert backend.filled == {"name": "赵新悦"}
 
     engine = get_engine(get_settings())
@@ -197,3 +247,110 @@ def test_real_manager_rejects_plan_after_navigation_or_control_type_change(clien
     with pytest.raises(BrowserAgentPlanError, match="页面控件已变化"):
         manager.fill(info.id, plan.token, ["name"])
     assert backend.filled is None
+
+
+def test_real_manager_rejects_plan_when_same_url_spa_structure_changes(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    backend = FakeEdgeBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+    assert plan.page_revision
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    # Same URL, same field id and same input type, but the SPA replaced the
+    # semantic structure of the page. The old plan must not be reused.
+    backend.name_label = "紧急联系人姓名"
+    with pytest.raises(BrowserAgentPlanError, match="页面结构已变化"):
+        manager.fill(info.id, plan.token, ["name"])
+    assert backend.filled is None
+
+
+def test_verify_mode_breaks_static_verification_deadlock_and_promotes_job(client, monkeypatch):
+    application_id = _seed_application_and_profile(job_status="DISCOVERED_URL_UNVERIFIED")
+    backend = FakeEdgeBackend()
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentConflictError
+
+    with pytest.raises(BrowserAgentConflictError, match="VERIFIED_OPEN"):
+        manager.start_for_application(application_id, mode="fill")
+
+    info = manager.start_for_application(application_id, mode="verify")
+    assert info.mode == "verify"
+
+    with pytest.raises(BrowserAgentConflictError, match="Verify-mode"):
+        manager.build_plan(info.id)
+
+    result = manager.confirm_browser_verification(info.id)
+    assert result["verified"] is True
+    assert result["job_status"] == "VERIFIED_OPEN"
+    assert result["evidence_count"] >= 1
+    assert info.mode == "fill"
+
+    # The same live browser session becomes fill-capable only after browser
+    # evidence has promoted the job.
+    plan = manager.build_plan(info.id)
+    assert plan.page_revision
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            application = session.get(ApplicationSession, application_id)
+            assert application is not None
+            job = session.get(Job, application.job_id)
+            assert job is not None
+            assert job.status == "VERIFIED_OPEN"
+    finally:
+        engine.dispose()
+
+
+def test_verify_mode_refuses_login_page_as_application_evidence(client, monkeypatch):
+    application_id = _seed_application_and_profile(job_status="DISCOVERED_URL_UNVERIFIED")
+    backend = FakeEdgeBackend()
+    backend.title = "招聘系统登录"
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    import pytest
+    from app.browser_agent.manager import BrowserAgentPlanError
+
+    info = manager.start_for_application(application_id, mode="verify")
+    with pytest.raises(BrowserAgentPlanError, match="实际申请表"):
+        manager.confirm_browser_verification(info.id)
+
+    engine = get_engine(get_settings())
+    try:
+        with Session(engine) as session:
+            application = session.get(ApplicationSession, application_id)
+            assert application is not None
+            job = session.get(Job, application.job_id)
+            assert job is not None
+            assert job.status == "DISCOVERED_URL_UNVERIFIED"
+    finally:
+        engine.dispose()
+
+
+def test_real_manager_propagates_post_fill_readback_failure(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    backend = FakeEdgeBackend()
+    backend.fill_outcome = "FAILED"
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+    result = manager.fill(info.id, plan.token, ["name"])
+
+    assert result["status"] == "FILLED_WITH_FAILURES"
+    assert result["filled_count"] == 1
+    assert result["verified_count"] == 0
+    assert result["failed_count"] == 1
+    assert result["results"][0]["status"] == "FAILED"
+    assert result["results"][0]["reason"] == "VALUE_REVERTED"

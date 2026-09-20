@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/api/browser-agent", tags=["browser-agent"])
 
 class BrowserAgentSessionStart(BaseModel):
     application_id: int = Field(gt=0)
+    mode: Literal["verify", "fill"] = "fill"
 
 
 class BrowserAgentSessionRead(BaseModel):
@@ -39,6 +41,7 @@ class BrowserAgentSessionRead(BaseModel):
     url: str
     status: str
     browser: str
+    mode: str
 
 
 class FillPlanItemRead(BaseModel):
@@ -62,6 +65,7 @@ class FillPlanRead(BaseModel):
     token: str
     session_id: str
     page_url: str
+    page_revision: str
     items: list[FillPlanItemRead]
     unmatched: list[PlanFieldSummaryRead]
     blocked: list[PlanFieldSummaryRead]
@@ -76,10 +80,30 @@ class FillRequest(BaseModel):
     field_ids: list[str]
 
 
+class FillFieldResultRead(BaseModel):
+    field_id: str
+    requested: object
+    observed: object | None = None
+    status: str
+    reason: str
+
+
 class FillResultRead(BaseModel):
     filled_count: int
     skipped_count: int
+    verified_count: int
+    failed_count: int
+    uncertain_count: int
+    results: list[FillFieldResultRead]
     status: str
+
+
+class BrowserVerificationRead(BaseModel):
+    verified: bool
+    job_status: str
+    page_url: str
+    evidence_count: int
+    page_revision: str
 
 
 class CloseResultRead(BaseModel):
@@ -95,6 +119,7 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
         token=plan.token,
         session_id=plan.session_id,
         page_url=plan.page_url,
+        page_revision=plan.page_revision,
         items=[
             FillPlanItemRead(
                 **{
@@ -116,7 +141,50 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
     )
 
 
-def _validate_application(application_id: int) -> None:
+def _mask_fill_result_value(source_path: str, value: object) -> object:
+    if source_path.startswith("collections.") or value is None or value == "":
+        return value
+    try:
+        definition = get_field_definition(source_path)
+    except KeyError:
+        return value
+    if not definition.sensitive:
+        return value
+    # Do not let post-fill read-back undo the masking guarantee enforced by
+    # FillPlanRead. Sensitive values stay local even after DOM verification.
+    return mask_profile_value(source_path, value)
+
+
+def _fill_result_read(result: dict[str, object]) -> FillResultRead:
+    raw_results = result.get("results")
+    rows: list[FillFieldResultRead] = []
+    if isinstance(raw_results, list):
+        for raw in raw_results:
+            if not isinstance(raw, dict):
+                continue
+            source_path = raw.get("source_path")
+            path = source_path if isinstance(source_path, str) else ""
+            rows.append(
+                FillFieldResultRead(
+                    field_id=str(raw.get("field_id", "")),
+                    requested=_mask_fill_result_value(path, raw.get("requested")),
+                    observed=_mask_fill_result_value(path, raw.get("observed")),
+                    status=str(raw.get("status", "")),
+                    reason=str(raw.get("reason", "")),
+                )
+            )
+    return FillResultRead(
+        filled_count=int(result.get("filled_count", 0)),
+        skipped_count=int(result.get("skipped_count", 0)),
+        verified_count=int(result.get("verified_count", 0)),
+        failed_count=int(result.get("failed_count", 0)),
+        uncertain_count=int(result.get("uncertain_count", 0)),
+        results=rows,
+        status=str(result.get("status", "")),
+    )
+
+
+def _validate_application(application_id: int, mode: str) -> None:
     engine = get_engine(get_settings())
     try:
         with Session(engine) as session:
@@ -128,17 +196,24 @@ def _validate_application(application_id: int) -> None:
             job = session.get(Job, application.job_id)
             if job is None:
                 raise HTTPException(status_code=404, detail="Job not found")
-            if job.status != "VERIFIED_OPEN":
-                raise HTTPException(status_code=409, detail="Browser Agent requires a VERIFIED_OPEN job")
+            if mode == "fill" and job.status != "VERIFIED_OPEN":
+                raise HTTPException(status_code=409, detail="Browser Agent fill mode requires a VERIFIED_OPEN job")
+            if not (application.opened_url or job.canonical_url or job.apply_url):
+                raise HTTPException(status_code=409, detail="Browser Agent requires an entry URL")
     finally:
         engine.dispose()
 
 
 @router.post("/sessions", response_model=BrowserAgentSessionRead)
 def start_browser_agent_session(body: BrowserAgentSessionStart) -> BrowserAgentSessionRead:
-    _validate_application(body.application_id)
+    _validate_application(body.application_id, body.mode)
     try:
-        return _session_read(get_browser_agent_manager().start_for_application(body.application_id))
+        return _session_read(
+            get_browser_agent_manager().start_for_application(
+                body.application_id,
+                mode=body.mode,
+            )
+        )
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentConflictError as exc:
@@ -162,6 +237,8 @@ def build_browser_agent_plan(session_id: str) -> FillPlanRead:
         return _plan_read(get_browser_agent_manager().build_plan(session_id))
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BrowserAgentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (BrowserControlError, BrowserUnavailableError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -175,6 +252,8 @@ def build_browser_agent_semantic_plan(session_id: str, body: SemanticPlanRequest
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentPlanError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BrowserAgentConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BrowserAgentAIUnavailableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -190,13 +269,30 @@ def build_browser_agent_semantic_plan(session_id: str, body: SemanticPlanRequest
 def fill_browser_agent_plan(session_id: str, body: FillRequest) -> FillResultRead:
     try:
         result = get_browser_agent_manager().fill(session_id, body.plan_token, body.field_ids)
-        return FillResultRead(**result)
+        return _fill_result_read(result)
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentPlanError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BrowserAgentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BrowserControlError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/verify", response_model=BrowserVerificationRead)
+def confirm_browser_agent_verification(session_id: str) -> BrowserVerificationRead:
+    try:
+        result = get_browser_agent_manager().confirm_browser_verification(session_id)
+        return BrowserVerificationRead(**result)
+    except BrowserAgentSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BrowserAgentConflictError, BrowserAgentPlanError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (BrowserControlError, BrowserUnavailableError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/sessions/{session_id}", response_model=CloseResultRead)

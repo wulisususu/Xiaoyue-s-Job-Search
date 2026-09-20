@@ -52,6 +52,46 @@ def _promote_url_candidates(session: Session, job: Job, transport: Transport | N
     return False
 
 
+def promote_browser_verified(
+    session: Session,
+    job: Job,
+    *,
+    checked_url: str,
+    final_url: str,
+    evidence: list[str],
+    content_fingerprint: str,
+) -> None:
+    """Promote a job after a user-visible browser proves an application form.
+
+    Browser verification is intentionally separate from static HTTP
+    verification. The observed browser URL is recorded for audit, but is not
+    persisted as canonical_url because authenticated SPA URLs may contain
+    short-lived session state.
+    """
+    session.add(
+        UrlObservation(
+            job_id=job.id,
+            checked_url=checked_url,
+            final_url=final_url,
+            redirect_chain_json="[]",
+            http_status=None,
+            health="BROWSER_VERIFIED",
+            ats=None,
+            page_type="application_form",
+            apply_evidence_json=json.dumps(evidence, ensure_ascii=False),
+            content_fingerprint=content_fingerprint,
+            error=None,
+        )
+    )
+    job.status = "VERIFIED_OPEN"
+    interval = next_verification_interval(
+        job.status,
+        job.deadline_text,
+        dt.datetime.now(dt.timezone.utc).date(),
+    )
+    job.next_verification_at = dt.datetime.now(dt.timezone.utc) + interval
+
+
 @dataclass(slots=True)
 class VerificationBatchResult:
     checked: int = 0
