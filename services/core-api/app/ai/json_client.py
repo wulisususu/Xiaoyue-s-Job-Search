@@ -67,6 +67,11 @@ class OpenAICompatibleJSONClient:
             }
 
         try:
+            endpoint = chat_completions_url(self._config.base_url)
+        except ValueError as exc:
+            raise ProviderRequestError(str(exc)) from exc
+
+        try:
             with httpx.Client(
                 transport=self._transport,
                 timeout=float(self._config.timeout_seconds),
@@ -75,7 +80,7 @@ class OpenAICompatibleJSONClient:
                     "Content-Type": "application/json",
                 },
             ) as client:
-                response = client.post(chat_completions_url(self._config.base_url), json=body)
+                response = client.post(endpoint, json=body)
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError("AI provider request timed out") from exc
         except httpx.RequestError as exc:

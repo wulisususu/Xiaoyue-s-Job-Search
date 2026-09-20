@@ -199,3 +199,27 @@ def test_provider_connection_test_requires_provider_and_key(client, monkeypatch)
     assert client.put("/api/ai/provider", json=PROVIDER_PAYLOAD).status_code == 200
     response = client.post("/api/ai/provider/test")
     assert response.status_code == 409
+
+
+def test_provider_api_rejects_remote_http_but_allows_loopback_http(client, monkeypatch):
+    monkeypatch.setattr(ai_routes, "get_secret_store", lambda: MemorySecretStore())
+
+    remote = client.put(
+        "/api/ai/provider",
+        json={**PROVIDER_PAYLOAD, "base_url": "http://api.example.com/v1"},
+    )
+    assert remote.status_code == 422
+    assert "must use HTTPS" in remote.json()["detail"]
+
+    lan = client.put(
+        "/api/ai/provider",
+        json={**PROVIDER_PAYLOAD, "base_url": "http://192.168.1.20:8000/v1"},
+    )
+    assert lan.status_code == 422
+
+    local = client.put(
+        "/api/ai/provider",
+        json={**PROVIDER_PAYLOAD, "base_url": "http://127.0.0.1:8000/v1"},
+    )
+    assert local.status_code == 200
+    assert local.json()["base_url"] == "http://127.0.0.1:8000/v1"

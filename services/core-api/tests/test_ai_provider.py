@@ -2,6 +2,7 @@ import pytest
 
 import httpx
 
+from app.ai.errors import ProviderRequestError
 from app.ai.provider import chat_completions_url, normalize_base_url, probe_provider
 from app.models import Base
 
@@ -32,6 +33,9 @@ def test_provider_base_url_is_normalized_and_chat_endpoint_is_stable():
     assert normalize_base_url("https://example.com/v1/") == "https://example.com/v1"
     assert chat_completions_url("https://example.com/v1/") == "https://example.com/v1/chat/completions"
     assert chat_completions_url("http://127.0.0.1:8000") == "http://127.0.0.1:8000/v1/chat/completions"
+    assert chat_completions_url("http://localhost:11434") == "http://localhost:11434/v1/chat/completions"
+    assert chat_completions_url("http://model.localhost:8000") == "http://model.localhost:8000/v1/chat/completions"
+    assert chat_completions_url("http://[::1]:8000") == "http://[::1]:8000/v1/chat/completions"
     assert chat_completions_url("https://open.bigmodel.cn/api/paas/v4") == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     assert chat_completions_url("https://generativelanguage.googleapis.com/v1beta/openai") == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
@@ -45,6 +49,11 @@ def test_provider_base_url_is_normalized_and_chat_endpoint_is_stable():
         "https://example.com/v1?token=secret",
         "https://example.com/v1#fragment",
         "https:///v1",
+        "http://example.com/v1",
+        "http://192.168.1.10:8000/v1",
+        "http://10.0.0.8:8000/v1",
+        "http://0.0.0.0:8000/v1",
+        "http://169.254.169.254/latest",
     ],
 )
 def test_provider_base_url_rejects_unsafe_or_ambiguous_values(value):
@@ -73,3 +82,23 @@ def test_provider_probe_uses_openai_chat_shape_and_authorization_header():
     assert captured["url"] == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     assert captured["authorization"] == "Bearer sk-secret"
     assert '"model":"glm-4.7"' in str(captured["body"])
+
+
+def test_provider_probe_refuses_remote_http_before_network_io():
+    called = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"choices": []})
+
+    with pytest.raises(ProviderRequestError, match="must use HTTPS"):
+        probe_provider(
+            base_url="http://example.com/v1",
+            api_key="sk-secret",
+            model="model",
+            timeout_seconds=30,
+            transport=httpx.MockTransport(handler),
+        )
+
+    assert called is False

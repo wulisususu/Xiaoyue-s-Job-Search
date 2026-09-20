@@ -17,6 +17,7 @@ it('offers an OpenCode-like provider picker with Chinese-first presets and custo
   render(<SettingsPage />);
 
   await waitFor(() => expect(screen.getByText('AI 模型与 Provider')).toBeInTheDocument());
+  expect(screen.getByText(/远程 Provider 必须使用 HTTPS/)).toBeInTheDocument();
   for (const name of ['DeepSeek', '通义千问', '智谱 GLM', 'Kimi', 'MiniMax', '腾讯混元', 'OpenAI', 'Gemini', 'Grok', 'Mistral', 'OpenRouter', '自定义兼容接口']) {
     expect(screen.getByRole('button', { name: new RegExp(name) })).toBeInTheDocument();
   }

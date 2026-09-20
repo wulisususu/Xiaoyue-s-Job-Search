@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 import time
 from dataclasses import dataclass
@@ -10,13 +11,24 @@ import httpx
 from .errors import ProviderRequestError, ProviderResponseError, ProviderTimeoutError
 
 
+def _is_loopback_provider_host(hostname: str) -> bool:
+    host = hostname.strip().lower().rstrip(".")
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def normalize_base_url(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
         raise ValueError("AI provider Base URL is required")
 
     parsed = urlsplit(raw)
-    if parsed.scheme.lower() not in {"http", "https"}:
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
         raise ValueError("AI provider Base URL must use http or https")
     if not parsed.hostname:
         raise ValueError("AI provider Base URL must include a host")
@@ -24,9 +36,14 @@ def normalize_base_url(value: str) -> str:
         raise ValueError("AI provider Base URL must not include credentials")
     if parsed.query or parsed.fragment:
         raise ValueError("AI provider Base URL must not include query strings or fragments")
+    if scheme == "http" and not _is_loopback_provider_host(parsed.hostname):
+        raise ValueError(
+            "Remote AI provider Base URL must use HTTPS; HTTP is only allowed "
+            "for localhost or loopback addresses"
+        )
 
     path = parsed.path.rstrip("/")
-    normalized = urlunsplit((parsed.scheme.lower(), parsed.netloc, path, "", ""))
+    normalized = urlunsplit((scheme, parsed.netloc, path, "", ""))
     return normalized.rstrip("/")
 
 
@@ -70,6 +87,11 @@ def probe_provider(
     if not model_id:
         raise ValueError("AI provider model is required")
 
+    try:
+        endpoint = chat_completions_url(base_url)
+    except ValueError as exc:
+        raise ProviderRequestError(str(exc)) from exc
+
     started = time.perf_counter()
     try:
         with httpx.Client(
@@ -81,7 +103,7 @@ def probe_provider(
             },
         ) as client:
             response = client.post(
-                chat_completions_url(base_url),
+                endpoint,
                 json={
                     "model": model_id,
                     "messages": [{"role": "user", "content": "Reply with OK."}],
