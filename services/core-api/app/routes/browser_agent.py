@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/api/browser-agent", tags=["browser-agent"])
 
 class BrowserAgentSessionStart(BaseModel):
     application_id: int = Field(gt=0)
+    mode: Literal["verify", "fill"] = "fill"
 
 
 class BrowserAgentSessionRead(BaseModel):
@@ -84,6 +86,14 @@ class FillResultRead(BaseModel):
     status: str
 
 
+class BrowserVerificationRead(BaseModel):
+    verified: bool
+    job_status: str
+    page_url: str
+    evidence_count: int
+    page_revision: str
+
+
 class CloseResultRead(BaseModel):
     closed: bool
 
@@ -119,7 +129,7 @@ def _plan_read(plan: FillPlan) -> FillPlanRead:
     )
 
 
-def _validate_application(application_id: int) -> None:
+def _validate_application(application_id: int, mode: str) -> None:
     engine = get_engine(get_settings())
     try:
         with Session(engine) as session:
@@ -131,17 +141,24 @@ def _validate_application(application_id: int) -> None:
             job = session.get(Job, application.job_id)
             if job is None:
                 raise HTTPException(status_code=404, detail="Job not found")
-            if job.status != "VERIFIED_OPEN":
-                raise HTTPException(status_code=409, detail="Browser Agent requires a VERIFIED_OPEN job")
+            if mode == "fill" and job.status != "VERIFIED_OPEN":
+                raise HTTPException(status_code=409, detail="Browser Agent fill mode requires a VERIFIED_OPEN job")
+            if not (application.opened_url or job.canonical_url or job.apply_url):
+                raise HTTPException(status_code=409, detail="Browser Agent requires an entry URL")
     finally:
         engine.dispose()
 
 
 @router.post("/sessions", response_model=BrowserAgentSessionRead)
 def start_browser_agent_session(body: BrowserAgentSessionStart) -> BrowserAgentSessionRead:
-    _validate_application(body.application_id)
+    _validate_application(body.application_id, body.mode)
     try:
-        return _session_read(get_browser_agent_manager().start_for_application(body.application_id))
+        return _session_read(
+            get_browser_agent_manager().start_for_application(
+                body.application_id,
+                mode=body.mode,
+            )
+        )
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentConflictError as exc:
@@ -165,6 +182,8 @@ def build_browser_agent_plan(session_id: str) -> FillPlanRead:
         return _plan_read(get_browser_agent_manager().build_plan(session_id))
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BrowserAgentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (BrowserControlError, BrowserUnavailableError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -178,6 +197,8 @@ def build_browser_agent_semantic_plan(session_id: str, body: SemanticPlanRequest
     except BrowserAgentSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentPlanError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BrowserAgentConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BrowserAgentAIUnavailableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -198,8 +219,25 @@ def fill_browser_agent_plan(session_id: str, body: FillRequest) -> FillResultRea
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except BrowserAgentPlanError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BrowserAgentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BrowserControlError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/verify", response_model=BrowserVerificationRead)
+def confirm_browser_agent_verification(session_id: str) -> BrowserVerificationRead:
+    try:
+        result = get_browser_agent_manager().confirm_browser_verification(session_id)
+        return BrowserVerificationRead(**result)
+    except BrowserAgentSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BrowserAgentConflictError, BrowserAgentPlanError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (BrowserControlError, BrowserUnavailableError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/sessions/{session_id}", response_model=CloseResultRead)
