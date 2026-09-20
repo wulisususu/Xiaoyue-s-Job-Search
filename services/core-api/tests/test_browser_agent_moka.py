@@ -21,7 +21,6 @@ from app.browser_agent.models import ConfirmedProfileSnapshot, FormFieldDescript
         ("experienceInfo[1].title", "collections.experience[1].role"),
         ("projectInfo[3].projectName", "collections.project[3].name"),
         ("languageInfo[0].language", "collections.language[0].name"),
-        ("awardInfo[0].awardName", "collections.award[0].name"),
         ("educationInfo_1_school", "collections.education[1].school"),
         ("form_basicInfo_phone", "contact.phone"),
     ],
@@ -38,6 +37,8 @@ def test_moka_source_path_maps_documented_native_paths(raw_name, expected):
         "practiceInfo[0].company",
         "educationInfo[abc].school",
         "educationInfo[0].unknownField",
+        "experienceInfo[0].location",
+        "awardInfo[0].awardName",
         "unrelated.school",
     ],
 )
