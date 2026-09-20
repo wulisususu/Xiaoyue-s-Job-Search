@@ -599,7 +599,10 @@ function adapterLimitationLabel(value: string): string {
     repeatable_sections: '重复经历区块',
     repeatable_sections_without_native_paths: '无原生路径的重复经历区块',
     practice_experience_disambiguation: '实习/工作经历归类',
+    internship_experience_disambiguation: '实习/工作经历归类',
     moka_custom_fields: 'Moka 自定义字段',
+    beisen_custom_fields: '北森自定义字段',
+    high_risk_declarations: '家庭/亲属/证件等高风险声明',
     iframe_forms: 'iframe 表单',
     multi_step_navigation: '多步骤自动导航',
     auto_submit: '自动提交',
@@ -611,6 +614,7 @@ function adapterLimitationLabel(value: string): string {
 function adapterImplementationLabel(value: string): string {
   if (value === 'generic_dom') return '通用 DOM 兼容层';
   if (value === 'moka_dom_v1') return 'Moka 专项 DOM v1';
+  if (value === 'beisen_dom_v1') return '北森专项 DOM v1';
   return value;
 }
 
