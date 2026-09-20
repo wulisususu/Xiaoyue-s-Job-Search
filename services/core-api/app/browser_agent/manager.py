@@ -17,6 +17,7 @@ from ..db import get_engine
 from ..models import AIProviderConfig, ApplicationSession, Job
 from ..verification.service import promote_browser_verified
 from ..verification.url_guard import validate_external_url
+from .adapters import select_browser_adapter
 from .cdp import BrowserControlError, BrowserUnavailableError, EdgeBrowserBackend, EdgeHandle
 from .mapping import build_fill_plan
 from .models import BrowserAgentSessionInfo, FillPlan, FormScan
@@ -205,11 +206,17 @@ class BrowserAgentManager:
                 snapshot = build_confirmed_profile_snapshot(db)
         finally:
             engine.dispose()
+        adapter = select_browser_adapter(scan.url or runtime.info.url)
         plan = build_fill_plan(
             snapshot,
             scan,
             session_id=session_id,
             page_revision=_page_revision(scan),
+            adapter_id=adapter.id,
+            adapter_display_name=adapter.display_name,
+            adapter_implementation=adapter.implementation,
+            adapter_capabilities=list(adapter.capabilities),
+            adapter_limitations=list(adapter.limitations),
         )
         runtime.latest_plan = plan
         runtime.info.url = scan.url or runtime.info.url
