@@ -262,7 +262,10 @@ export function SettingsPage() {
                   placeholder="https://api.example.com/v1"
                   spellCheck={false}
                 />
-                <small>填写 API 根地址，不要填写 /chat/completions。</small>
+                <small>
+                  填写 API 根地址，不要填写 /chat/completions。远程 Provider 必须使用 HTTPS；
+                  HTTP 仅允许 localhost / loopback 本机服务。
+                </small>
               </label>
 
               <label className="settings-field span-2">
