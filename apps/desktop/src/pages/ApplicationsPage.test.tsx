@@ -16,7 +16,9 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     job_title: '视觉设计',
     company_name: '中国移动',
     status: 'OPENED',
+    allowed_next_statuses: ['IN_PROGRESS', 'SUBMITTED', 'ABANDONED'],
     channel: 'browser_agent',
+    resume_version_id: null,
     opened_url: 'https://ats.example.com/apply',
     opened_at: '2026-09-19T08:00:00',
     updated_at: '2026-09-19T08:00:00',
@@ -99,4 +101,91 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     expect(fill).toBeDefined();
     expect(JSON.parse(String(fill!.init?.body))).toEqual({ plan_token: 'plan-ai', field_ids: ['f-name'] });
   });
+});
+
+
+it('loads an application timeline lazily and only offers legal next statuses', async () => {
+  const application = {
+    id: 7,
+    job_id: 'job-7',
+    job_title: '视觉设计',
+    company_name: '中国联通',
+    status: 'SUBMITTED',
+    allowed_next_statuses: ['INTERVIEWING', 'OFFER', 'REJECTED', 'ABANDONED'],
+    channel: 'manual',
+    resume_version_id: 'resume-v3',
+    opened_url: 'https://ats.example.com/apply/7',
+    opened_at: '2026-09-20T08:00:00',
+    updated_at: '2026-09-20T09:00:00',
+  };
+  const events = [
+    {
+      id: 1,
+      application_id: 7,
+      event_type: 'CREATED',
+      from_status: null,
+      to_status: 'OPENED',
+      note: null,
+      created_at: '2026-09-20T08:00:00',
+    },
+    {
+      id: 2,
+      application_id: 7,
+      event_type: 'STATUS_CHANGED',
+      from_status: 'OPENED',
+      to_status: 'SUBMITTED',
+      note: '官网确认提交成功',
+      created_at: '2026-09-20T09:00:00',
+    },
+  ];
+
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/api/applications')) {
+      return Promise.resolve(new Response(JSON.stringify([application]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }
+    if (url.endsWith('/api/browser-agent/sessions')) {
+      return Promise.resolve(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }
+    if (url.endsWith('/api/applications/7/events')) {
+      return Promise.resolve(new Response(JSON.stringify(events), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }
+    return Promise.resolve(new Response('{}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+  }));
+
+  render(<ApplicationsPage />);
+  await waitFor(() => expect(screen.getByText('中国联通')).toBeInTheDocument());
+
+  const statusSelect = screen.getByRole('combobox', { name: '投递状态' }) as HTMLSelectElement;
+  expect(Array.from(statusSelect.options).map((option) => option.value)).toEqual([
+    'SUBMITTED',
+    'INTERVIEWING',
+    'OFFER',
+    'REJECTED',
+    'ABANDONED',
+  ]);
+  expect(screen.queryByRole('option', { name: '已打开入口' })).not.toBeInTheDocument();
+  expect(screen.getByText('resume-v3')).toBeInTheDocument();
+  expect(calls.some((url) => url.endsWith('/api/applications/7/events'))).toBe(false);
+
+  fireEvent.click(screen.getByRole('button', { name: '查看时间线' }));
+
+  await waitFor(() => expect(screen.getByText('官网确认提交成功')).toBeInTheDocument());
+  expect(screen.getByText('创建投递记录')).toBeInTheDocument();
+  expect(screen.getByText('已打开入口 → 已投递')).toBeInTheDocument();
+  expect(calls.filter((url) => url.endsWith('/api/applications/7/events'))).toHaveLength(1);
 });
