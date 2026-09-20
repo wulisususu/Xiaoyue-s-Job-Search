@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..verification.ats import detect_ats
+from .beisen import apply_beisen_scan_hints
 from .moka import apply_moka_scan_hints
 from .models import FormScan
 
@@ -76,9 +77,23 @@ _ADAPTERS: dict[str, BrowserATSAdapter] = {
     "beisen": BrowserATSAdapter(
         id="beisen",
         display_name="北森",
-        implementation="generic_dom",
-        capabilities=_GENERIC_CAPABILITIES,
-        limitations=_GENERIC_LIMITATIONS,
+        implementation="beisen_dom_v1",
+        capabilities=(
+            *_GENERIC_CAPABILITIES,
+            "beisen_standard_resume_paths",
+            "indexed_repeatable_mapping",
+        ),
+        limitations=(
+            "file_upload",
+            "cascading_select",
+            "repeatable_sections_without_native_paths",
+            "internship_experience_disambiguation",
+            "beisen_custom_fields",
+            "high_risk_declarations",
+            "iframe_forms",
+            "multi_step_navigation",
+            "auto_submit",
+        ),
     ),
     "feishu": BrowserATSAdapter(
         id="feishu",
@@ -119,4 +134,6 @@ def adapt_scan_for_browser_adapter(
 ) -> FormScan:
     if adapter.id == "moka":
         return apply_moka_scan_hints(scan)
+    if adapter.id == "beisen":
+        return apply_beisen_scan_hints(scan)
     return scan
