@@ -37,9 +37,9 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     page_revision: 'revision-1',
     adapter_id: 'moka',
     adapter_display_name: 'Moka',
-    adapter_implementation: 'generic_dom',
-    adapter_capabilities: ['dom_scan', 'post_fill_readback'],
-    adapter_limitations: ['file_upload', 'auto_submit'],
+    adapter_implementation: 'moka_dom_v1',
+    adapter_capabilities: ['dom_scan', 'post_fill_readback', 'moka_native_field_paths', 'indexed_repeatable_mapping'],
+    adapter_limitations: ['file_upload', 'cascading_select', 'practice_experience_disambiguation', 'auto_submit'],
     items: [
       { field_id: 'f-name', label: '姓名', control_type: 'text', value: '赵新悦', source_path: 'identity.name', confidence: 0.99, reason: '姓名', requires_confirmation: false },
       { field_id: 'f-origin', label: '生源地', control_type: 'text', value: '安徽', source_path: 'location.hukou', confidence: 0.72, reason: '生源地≈户籍地', requires_confirmation: true },
@@ -104,8 +104,8 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
   expect(screen.getByText(/紧急联系人/)).toBeInTheDocument();
   expect(screen.getByText(/不会点击提交按钮/)).toBeInTheDocument();
   expect(screen.getByText(/Moka/)).toBeInTheDocument();
-  expect(screen.getByText(/通用 DOM 兼容层/)).toBeInTheDocument();
-  expect(screen.getByText(/附件上传、自动提交/)).toBeInTheDocument();
+  expect(screen.getByText(/Moka 专项 DOM v1/)).toBeInTheDocument();
+  expect(screen.getByText(/附件上传、级联选择、实习\/工作经历归类、自动提交/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'AI 补全未匹配' })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'AI 补全未匹配' }));
