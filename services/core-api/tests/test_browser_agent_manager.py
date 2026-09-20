@@ -23,6 +23,7 @@ class FakeEdgeBackend:
         self.name_input_type = "text"
         self.name_label = "姓名"
         self.title = "申请表"
+        self.fill_outcome = "VERIFIED"
 
     def start(self, url: str, profile_dir: Path):
         self.started = (url, profile_dir)
@@ -63,7 +64,36 @@ class FakeEdgeBackend:
 
     def fill(self, handle, values):
         self.filled = values
-        return {"filled_count": len(values), "skipped_count": 0}
+        results = []
+        for field_id, value in values.items():
+            if self.fill_outcome == "FAILED":
+                results.append(
+                    {
+                        "field_id": field_id,
+                        "requested": value,
+                        "observed": "",
+                        "status": "FAILED",
+                        "reason": "VALUE_REVERTED",
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "field_id": field_id,
+                        "requested": value,
+                        "observed": value,
+                        "status": "VERIFIED",
+                        "reason": "READBACK_MATCH",
+                    }
+                )
+        return {
+            "filled_count": len(values),
+            "skipped_count": 0,
+            "verified_count": len(values) if self.fill_outcome == "VERIFIED" else 0,
+            "failed_count": len(values) if self.fill_outcome == "FAILED" else 0,
+            "uncertain_count": 0,
+            "results": results,
+        }
 
     def close(self, handle):
         self.closed = True
@@ -144,7 +174,23 @@ def test_real_manager_uses_confirmed_ssot_blocks_sensitive_fields_and_updates_cr
     assert all(item.value != "unconfirmed@example.com" for item in plan.items)
 
     result = manager.fill(info.id, plan.token, ["name"])
-    assert result == {"filled_count": 1, "skipped_count": 0, "status": "FILLED"}
+    assert result == {
+        "filled_count": 1,
+        "skipped_count": 0,
+        "verified_count": 1,
+        "failed_count": 0,
+        "uncertain_count": 0,
+        "results": [
+            {
+                "field_id": "name",
+                "requested": "赵新悦",
+                "observed": "赵新悦",
+                "status": "VERIFIED",
+                "reason": "READBACK_MATCH",
+            }
+        ],
+        "status": "VERIFIED",
+    }
     assert backend.filled == {"name": "赵新悦"}
 
     engine = get_engine(get_settings())
@@ -288,3 +334,22 @@ def test_verify_mode_refuses_login_page_as_application_evidence(client, monkeypa
             assert job.status == "DISCOVERED_URL_UNVERIFIED"
     finally:
         engine.dispose()
+
+
+def test_real_manager_propagates_post_fill_readback_failure(client, monkeypatch):
+    application_id = _seed_application_and_profile()
+    backend = FakeEdgeBackend()
+    backend.fill_outcome = "FAILED"
+    manager = BrowserAgentManager(backend=backend)
+    monkeypatch.setattr("app.browser_agent.manager.validate_external_url", lambda url: None)
+
+    info = manager.start_for_application(application_id)
+    plan = manager.build_plan(info.id)
+    result = manager.fill(info.id, plan.token, ["name"])
+
+    assert result["status"] == "FILLED_WITH_FAILURES"
+    assert result["filled_count"] == 1
+    assert result["verified_count"] == 0
+    assert result["failed_count"] == 1
+    assert result["results"][0]["status"] == "FAILED"
+    assert result["results"][0]["reason"] == "VALUE_REVERTED"
