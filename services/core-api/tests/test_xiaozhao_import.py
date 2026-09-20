@@ -179,3 +179,118 @@ def test_removed_record_is_staled_and_reappearing_record_is_revived(tmp_path: Pa
         revived = session.scalars(select(Job).where(Job.title == '岗位B')).one()
         assert revived.status == 'DISCOVERED_URL_UNVERIFIED'
         assert session.scalar(select(JobSource).where(JobSource.status == 'STALE')) is None
+
+
+def test_missing_upstream_job_fields_do_not_erase_existing_canonical_values(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    Base.metadata.create_all(engine)
+    url = "https://jobs.example.com/apply/missing-semantics"
+
+    first = {
+        "updated": "2026-09-18",
+        "count": 1,
+        "jobs": [{
+            "c": "中国移动",
+            "p": "视觉设计师",
+            "l": "南京",
+            "w": "27届秋招",
+            "d": "2026-10-01",
+            "ind": "通信",
+            "u": url,
+        }],
+    }
+    # p/l/w/d/ind are omitted entirely. They mean "no update", not clear.
+    second = {
+        "updated": "2026-09-19",
+        "count": 1,
+        "jobs": [{
+            "c": "中国移动",
+            "u": url,
+        }],
+    }
+
+    with Session(engine) as session:
+        import_xiaozhao_payload(session, first)
+        import_xiaozhao_payload(session, second)
+
+        job = session.scalar(select(Job))
+        assert job is not None
+        assert job.title == "视觉设计师"
+        assert job.location == "南京"
+        assert job.recruitment_batch == "27届秋招"
+        assert job.deadline_text == "2026-10-01"
+        assert job.industry == "通信"
+        assert job.source_updated_at == "2026-09-19"
+
+
+def test_explicit_blank_or_null_upstream_job_fields_clear_canonical_values(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    Base.metadata.create_all(engine)
+    url = "https://jobs.example.com/apply/clear-semantics"
+
+    first = {
+        "updated": "2026-09-18",
+        "count": 1,
+        "jobs": [{
+            "c": "中国移动",
+            "p": "视觉设计师",
+            "l": "南京",
+            "w": "27届秋招",
+            "d": "2026-10-01",
+            "ind": "通信",
+            "u": url,
+        }],
+    }
+    second = {
+        "updated": "2026-09-19",
+        "count": 1,
+        "jobs": [{
+            "c": "中国移动",
+            "p": "",
+            "l": None,
+            "w": "",
+            "d": None,
+            # Explicit ind=None must clear rather than fall back to legacy t.
+            "ind": None,
+            "t": "其他",
+            "u": url,
+        }],
+    }
+
+    with Session(engine) as session:
+        import_xiaozhao_payload(session, first)
+        import_xiaozhao_payload(session, second)
+
+        jobs = session.scalars(select(Job)).all()
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.title == ""
+        assert job.location == ""
+        assert job.recruitment_batch == ""
+        assert job.deadline_text == ""
+        assert job.industry == ""
+        assert job.source_updated_at == "2026-09-19"
+
+
+def test_missing_structured_industry_falls_back_to_legacy_type_only_on_new_input(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    Base.metadata.create_all(engine)
+    payload = {
+        "updated": "2026-09-19",
+        "count": 1,
+        "jobs": [{
+            "c": "中国移动",
+            "p": "设计类",
+            "l": "南京",
+            "w": "27届秋招",
+            "d": "招满即止",
+            "t": "通信运营商",
+            "u": "https://jobs.example.com/apply/legacy-industry",
+        }],
+    }
+
+    with Session(engine) as session:
+        import_xiaozhao_payload(session, payload)
+        job = session.scalar(select(Job))
+        assert job is not None
+        assert job.industry == "通信运营商"
