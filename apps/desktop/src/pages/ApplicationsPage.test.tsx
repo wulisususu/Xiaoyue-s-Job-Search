@@ -15,6 +15,7 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     job_id: 'job-1',
     job_title: '视觉设计',
     company_name: '中国移动',
+    job_status: 'VERIFIED_OPEN',
     status: 'OPENED',
     channel: 'browser_agent',
     opened_url: 'https://ats.example.com/apply',
@@ -27,11 +28,13 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
     url: application.opened_url,
     status: 'READY',
     browser: 'Microsoft Edge',
+    mode: 'fill',
   };
   const plan = {
     token: 'plan-1',
     session_id: 'agent-1',
     page_url: application.opened_url,
+    page_revision: 'revision-1',
     items: [
       { field_id: 'f-name', label: '姓名', control_type: 'text', value: '赵新悦', source_path: 'identity.name', confidence: 0.99, reason: '姓名', requires_confirmation: false },
       { field_id: 'f-origin', label: '生源地', control_type: 'text', value: '安徽', source_path: 'location.hukou', confidence: 0.72, reason: '生源地≈户籍地', requires_confirmation: true },
@@ -64,7 +67,23 @@ it('reviews a Browser Agent fill plan before sending approved field ids', async 
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
     if (url.endsWith('/api/browser-agent/sessions/agent-1/fill')) {
-      return Promise.resolve(new Response(JSON.stringify({ filled_count: 1, skipped_count: 0, status: 'FILLED' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      return Promise.resolve(new Response(JSON.stringify({
+        filled_count: 1,
+        skipped_count: 0,
+        verified_count: 1,
+        failed_count: 0,
+        uncertain_count: 0,
+        status: 'VERIFIED',
+        results: [
+          {
+            field_id: 'f-name',
+            requested: '赵新悦',
+            observed: '赵新悦',
+            status: 'VERIFIED',
+            reason: 'READBACK_MATCH',
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
     return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
   }));
