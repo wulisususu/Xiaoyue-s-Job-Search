@@ -24,6 +24,7 @@ class FormFieldDescriptor:
     options: list[str]
     disabled: bool = False
     readonly: bool = False
+    adapter_source_path: str = ""
 
 
 @dataclass(slots=True)
