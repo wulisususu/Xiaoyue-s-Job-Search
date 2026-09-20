@@ -75,6 +75,7 @@ button, input, select, textarea { font: inherit; }
 .source-health-card p { margin: 7px 0 0; color: #7b879a; font-size: 11px; }
 .source-health-state { padding: 4px 7px; border-radius: 999px; font-size: 10px; font-weight: 800; background: #eef1f6; color: #66758b; }
 .source-health-state.ok { background: #e9f7ef; color: #247a4d; }
+.source-health-state.quarantined { background: #fff5dc; color: #8a6416; }
 .source-health-state.failed { background: #fff0ee; color: #b34437; }
 .source-health-card .source-error { color: #b34437; }
 .action-message { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #edf0f4; color: #536078; font-size: 12px; }
