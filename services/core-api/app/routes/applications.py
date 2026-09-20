@@ -7,34 +7,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..application_lifecycle import (
+    ACTIVE_STATUSES,
+    ALLOWED_STATUSES,
+    InvalidApplicationTransition,
+    allowed_next_statuses,
+    record_application_created,
+    transition_application,
+)
 from ..config import get_settings
 from ..db import get_engine
 from ..models import ApplicationEvent, ApplicationSession, Company, Job, ResumeVersion
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
-
-ALLOWED_STATUSES = {
-    "OPENED",
-    "IN_PROGRESS",
-    "SUBMITTED",
-    "INTERVIEWING",
-    "OFFER",
-    "REJECTED",
-    "ABANDONED",
-}
-
-TERMINAL_STATUSES = {"REJECTED", "ABANDONED"}
-ACTIVE_STATUSES = ALLOWED_STATUSES - TERMINAL_STATUSES
-
-STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
-    "OPENED": ("IN_PROGRESS", "SUBMITTED", "ABANDONED"),
-    "IN_PROGRESS": ("SUBMITTED", "ABANDONED"),
-    "SUBMITTED": ("INTERVIEWING", "OFFER", "REJECTED", "ABANDONED"),
-    "INTERVIEWING": ("OFFER", "REJECTED", "ABANDONED"),
-    "OFFER": ("ABANDONED",),
-    "REJECTED": (),
-    "ABANDONED": (),
-}
 
 
 class ApplicationStart(BaseModel):
@@ -81,7 +66,7 @@ def _read(session: Session, record: ApplicationSession) -> ApplicationRead:
         job_title=job.title if job else "",
         company_name=company.name if company else "",
         status=record.status,
-        allowed_next_statuses=list(STATUS_TRANSITIONS.get(record.status, ())),
+        allowed_next_statuses=list(allowed_next_statuses(record.status)),
         channel=record.channel,
         resume_version_id=record.resume_version_id,
         opened_url=record.opened_url,
@@ -160,15 +145,7 @@ def start_application(body: ApplicationStart) -> ApplicationRead:
             )
             session.add(record)
             session.flush()
-            session.add(
-                ApplicationEvent(
-                    application_id=record.id,
-                    event_type="CREATED",
-                    from_status=None,
-                    to_status="OPENED",
-                    note=None,
-                )
-            )
+            record_application_created(session, record)
             session.commit()
             session.refresh(record)
             return _read(session, record)
@@ -219,30 +196,19 @@ def update_application_status(application_id: int, body: ApplicationStatusUpdate
             if record is None:
                 raise HTTPException(status_code=404, detail="Application not found")
 
-            if body.status == record.status:
+            try:
+                changed = transition_application(
+                    session,
+                    record,
+                    body.status,
+                    note=body.note,
+                )
+            except InvalidApplicationTransition as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+            if not changed:
                 return _read(session, record)
 
-            allowed = STATUS_TRANSITIONS.get(record.status, ())
-            if body.status not in allowed:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"Invalid application status transition {record.status} -> {body.status}; "
-                        f"allowed next statuses: {list(allowed)}"
-                    ),
-                )
-
-            previous = record.status
-            record.status = body.status
-            session.add(
-                ApplicationEvent(
-                    application_id=record.id,
-                    event_type="STATUS_CHANGED",
-                    from_status=previous,
-                    to_status=body.status,
-                    note=body.note.strip() if body.note and body.note.strip() else None,
-                )
-            )
             session.commit()
             session.refresh(record)
             return _read(session, record)
