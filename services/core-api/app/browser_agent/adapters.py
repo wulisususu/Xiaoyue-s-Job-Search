@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..verification.ats import detect_ats
+from .moka import apply_moka_scan_hints
+from .models import FormScan
 
 _GENERIC_CAPABILITIES = (
     "dom_scan",
@@ -53,9 +55,22 @@ _ADAPTERS: dict[str, BrowserATSAdapter] = {
     "moka": BrowserATSAdapter(
         id="moka",
         display_name="Moka",
-        implementation="generic_dom",
-        capabilities=_GENERIC_CAPABILITIES,
-        limitations=_GENERIC_LIMITATIONS,
+        implementation="moka_dom_v1",
+        capabilities=(
+            *_GENERIC_CAPABILITIES,
+            "moka_native_field_paths",
+            "indexed_repeatable_mapping",
+        ),
+        limitations=(
+            "file_upload",
+            "cascading_select",
+            "repeatable_sections_without_native_paths",
+            "practice_experience_disambiguation",
+            "iframe_forms",
+            "multi_step_navigation",
+            "moka_custom_fields",
+            "auto_submit",
+        ),
     ),
     "beisen": BrowserATSAdapter(
         id="beisen",
@@ -95,3 +110,12 @@ def get_browser_adapter(adapter_id: str) -> BrowserATSAdapter:
 
 def list_browser_adapters() -> tuple[BrowserATSAdapter, ...]:
     return (_GENERIC, *_ADAPTERS.values())
+
+
+def adapt_scan_for_browser_adapter(
+    adapter: BrowserATSAdapter,
+    scan: FormScan,
+) -> FormScan:
+    if adapter.id == "moka":
+        return apply_moka_scan_hints(scan)
+    return scan
